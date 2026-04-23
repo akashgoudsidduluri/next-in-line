@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import jwt from "jsonwebtoken";
 import {
   signCompanyToken,
   signApplicantToken,
@@ -100,8 +101,7 @@ describe("auth/middleware", () => {
     const { signCompanyToken: _ } = { signCompanyToken };
     const spy = vi.spyOn(Date, "now");
     spy.mockRestore();
-    const bogus =
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoid2VpcmQifQ.invalid";
+    const bogus = jwt.sign({ role: "weird" }, "temp-secret");
     const { err } = runMiddleware(
       requireCompany,
       fakeReq({ authorization: `Bearer ${bogus}` }),
