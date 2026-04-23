@@ -175,12 +175,25 @@ export async function applyToJob(input: ApplyInput): Promise<Application> {
   return db.transaction(async (tx) => {
     const job = await lockJob(tx, input.jobId);
 
-    const [applicant] = await tx
-      .insert(applicantsTable)
-      .values({ name: input.name, email: input.email })
-      .returning();
+    // Find or create the applicant. Even though the engine was originally designed 
+    // for historical apply-time identity, the current schema enforces unique emails
+    // for auth. We reuse the existing row if found to avoid 500 errors.
+    let applicantRows = await tx
+      .select()
+      .from(applicantsTable)
+      .where(eq(applicantsTable.email, input.email))
+      .limit(1);
 
-    if (!applicant) throw new Error("Failed to create applicant");
+    let applicant = applicantRows[0];
+    if (!applicant) {
+      const [newApplicant] = await tx
+        .insert(applicantsTable)
+        .values({ name: input.name, email: input.email })
+        .returning();
+      applicant = newApplicant;
+    }
+
+    if (!applicant) throw new Error("Failed to resolve applicant");
 
     const active = await countActive(tx, input.jobId);
 

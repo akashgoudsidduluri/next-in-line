@@ -1,7 +1,7 @@
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
-import { QueryClient, QueryClientProvider, QueryCache } from "@tanstack/react-query";
-import { useEffect, useMemo } from "react";
-import { Toaster } from "@/components/ui/toaster";
+import { QueryClient, QueryClientProvider, QueryCache, type QueryCacheNotifyEvent } from "@tanstack/react-query";
+import { useEffect, useMemo, type ReactNode } from "react";
+import { Toaster } from "sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "next-themes";
 
@@ -59,7 +59,7 @@ function Router() {
 
 // Hooks a 401 handler into every query: if the token is stale or missing,
 // log out and send the user back to the appropriate login screen.
-function AuthAwareQueryClient({ children }: { children: React.ReactNode }) {
+function AuthAwareQueryClient({ children }: { children: ReactNode }) {
   const { auth, logout } = useAuth();
   const [, setLocation] = useLocation();
 
@@ -73,7 +73,7 @@ function AuthAwareQueryClient({ children }: { children: React.ReactNode }) {
   );
 
   useEffect(() => {
-    const unsubscribe = client.getQueryCache().subscribe((evt) => {
+    const unsubscribe = client.getQueryCache().subscribe((evt: QueryCacheNotifyEvent) => {
       if (evt.type !== "updated") return;
       const err = evt.query.state.error as { status?: number } | null;
       if (err && err.status === 401) {

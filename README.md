@@ -191,7 +191,7 @@ Tokens are HS256, signed with `SESSION_SECRET`, with a 7-day TTL. The token shap
 | `POST /api/applications/:id/acknowledge` | `requireApplicant` | same |
 | `POST /api/applications/:id/exit` | `requireApplicant` | same |
 
-**Note.** The frontend in `artifacts/pipeline/` was built before auth was bolted on and currently makes anonymous requests — it shows 401s after this change. Wiring login/register screens is straightforward (hooks already use a configured client) but is out of scope for this change-set.
+**Frontend integration.** The React frontend in `artifacts/pipeline/` is fully auth-integrated. `AuthContext` calls `setAuthTokenGetter` so every generated React Query hook sends the bearer token automatically. Login and register screens exist for both roles (`/company/login`, `/company/register`, `/applicant/login`, `/applicant/register`). Route guards redirect unauthenticated users to the correct login page. A 401 interceptor in `AuthAwareQueryClient` clears the token and redirects on stale sessions.
 
 ---
 
@@ -301,7 +301,7 @@ artifacts/
       __tests__/
         setup.ts          Test bootstrap
         resetDb.ts        DELETE-based per-test reset (server-friendly)
-  pipeline/               React + Vite frontend (pre-auth; see §6)
+  pipeline/               React + Vite frontend — fully auth-integrated
 lib/
   api-spec/openapi.yaml   Single source of truth
   api-zod/                Generated server-side Zod validators
@@ -319,13 +319,32 @@ lib/
 ## 12. Running Locally
 
 ```bash
+# 1. Install all workspace dependencies
 pnpm install
-pnpm --filter @workspace/db run push          # apply schema
-pnpm --filter @workspace/api-server run test  # 43 tests, ~10s
-# then start workflows: api-server + pipeline (managed by Replit)
+
+# 2. Push the database schema (needs DATABASE_URL set)
+pnpm --filter @workspace/db run push
+
+# 3. Run the test suite (43 tests, ~10 s)
+pnpm --filter @workspace/api-server run test
+
+# 4. Start the API server  (terminal 1)
+PORT=3000 SESSION_SECRET=dev-secret pnpm --filter @workspace/api-server run dev
+
+# 5. Start the React frontend  (terminal 2)
+#    The Vite dev server proxies /api → localhost:3000 automatically.
+pnpm --filter @workspace/pipeline run dev
+#    Then open http://localhost:5173
 ```
 
-Required env: `DATABASE_URL`, `SESSION_SECRET`. Both are provisioned automatically.
+Required env vars:
+
+| Variable | Used by | Default in dev |
+| --- | --- | --- |
+| `DATABASE_URL` | API server + tests | — (must be set) |
+| `SESSION_SECRET` | API server JWT signing | — (must be set) |
+| `PORT` | API server | — (must be set) |
+| `API_PORT` | Vite proxy target | `3000` |
 
 ---
 
@@ -335,7 +354,6 @@ Required env: `DATABASE_URL`, `SESSION_SECRET`. Both are provisioned automatical
 - **No pagination on event log.** `/jobs/:id/events` returns the full history; the dashboard view caps at 50.
 - **No rate limiting on apply.** A determined applicant could spam `POST /jobs/:id/apply`. The duplicate-application guard prevents queue corruption but doesn't prevent log noise.
 - **Decay tick = 1s.** Worst-case decay latency = 1s. For sub-second windows you'd want PG `LISTEN/NOTIFY` driven by a deadline trigger.
-- **Frontend not yet auth-aware.** UI in `artifacts/pipeline/` makes anonymous requests; needs login/register screens added.
 - **Tests share the dev DB.** `resetDb` uses `DELETE FROM` between cases; CI should set `DATABASE_URL` to a dedicated test instance.
 
 ---
@@ -346,6 +364,5 @@ Required env: `DATABASE_URL`, `SESSION_SECRET`. Both are provisioned automatical
 - **Integration concurrency tests.** Hammer `apply` 1000× against a capacity-1 job from multiple Node workers, assert exactly 1 ACTIVE and 999 WAITLISTED.
 - **Email notifications on promotion.** Transactional mail when an applicant transitions Waitlist → Active so they can ack before decay.
 - **Configurable ack window per job.** `decay_seconds` is per-job already; expose it in the dashboard so recruiters can tune it role by role.
-- **Frontend auth screens.** Login/register flows for both roles with token storage in `localStorage`, a TanStack Query interceptor for the bearer header, and a 401 → redirect-to-login handler.
 - **Audit replay UI.** Surface the replay endpoint in the dashboard with a date picker — "show me the queue at 9am Monday".
 - **`pg_advisory_xact_lock(hashtext(jobId))`** instead of row-level `FOR UPDATE` on jobs — slightly cheaper, doesn't bump into unrelated DDL.
