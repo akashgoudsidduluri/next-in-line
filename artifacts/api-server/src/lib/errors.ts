@@ -70,10 +70,5 @@ export function toHttpError(err: unknown): HttpError {
     }
   }
   const message = err instanceof Error ? err.message : "Internal server error";
-  // Heuristic mapping from legacy string errors that pre-date typed errors.
-  if (/not found/i.test(message)) return new NotFoundError(message);
-  if (/cannot acknowledge|invalid state/i.test(message)) {
-    return new ConflictError(message);
-  }
   return new HttpError(500, "INTERNAL", message);
 }

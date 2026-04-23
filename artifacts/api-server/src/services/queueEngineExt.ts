@@ -9,7 +9,7 @@
  */
 
 import { sql, eq } from "drizzle-orm";
-import { db, jobsTable, applicantsTable, applicationsTable } from "@workspace/db";
+import { db, jobsTable, applicantsTable } from "@workspace/db";
 import { applyToJob } from "./queueEngine";
 import { NotFoundError, ConflictError } from "../lib/errors";
 

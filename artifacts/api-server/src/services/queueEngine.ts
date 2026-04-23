@@ -26,6 +26,7 @@ import {
   type Application,
   type EventType,
 } from "@workspace/db";
+import { NotFoundError, ConflictError, HttpError } from "../lib/errors";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -44,7 +45,7 @@ async function lockJob(tx: Tx, jobId: string) {
     sql`SELECT id, capacity, decay_seconds FROM jobs WHERE id = ${jobId} FOR UPDATE`,
   );
   const row = rows.rows[0];
-  if (!row) throw new Error(`Job not found: ${jobId}`);
+  if (!row) throw new NotFoundError(`Job not found: ${jobId}`);
   return {
     id: row.id,
     capacity: Number(row.capacity),
@@ -193,7 +194,7 @@ export async function applyToJob(input: ApplyInput): Promise<Application> {
       applicant = newApplicant;
     }
 
-    if (!applicant) throw new Error("Failed to resolve applicant");
+    if (!applicant) throw new HttpError(500, "DATABASE_ERROR", "Failed to resolve applicant");
 
     const active = await countActive(tx, input.jobId);
 
@@ -209,7 +210,7 @@ export async function applyToJob(input: ApplyInput): Promise<Application> {
           ackDeadline,
         })
         .returning();
-      if (!app) throw new Error("Failed to create application");
+      if (!app) throw new HttpError(500, "DATABASE_ERROR", "Failed to create application");
       await logEvent(tx, app.id, input.jobId, "APPLIED", {
         admittedAs: "ACTIVE",
       });
@@ -230,7 +231,7 @@ export async function applyToJob(input: ApplyInput): Promise<Application> {
         queuePosition: nextPos,
       })
       .returning();
-    if (!app) throw new Error("Failed to create application");
+    if (!app) throw new HttpError(500, "DATABASE_ERROR", "Failed to create application");
     await logEvent(tx, app.id, input.jobId, "APPLIED", {
       admittedAs: "WAITLISTED",
       queuePosition: nextPos,
@@ -253,10 +254,10 @@ export async function acknowledgeApplication(
       .where(eq(applicationsTable.id, applicationId))
       .limit(1);
     const app = existing[0];
-    if (!app) throw new Error(`Application not found: ${applicationId}`);
+    if (!app) throw new NotFoundError(`Application not found: ${applicationId}`);
     await lockJob(tx, app.jobId);
     if (app.state !== "ACTIVE")
-      throw new Error(
+      throw new ConflictError(
         `Cannot acknowledge application in state ${app.state} (must be ACTIVE)`,
       );
     if (app.acknowledgedAt) return app;
@@ -267,7 +268,7 @@ export async function acknowledgeApplication(
       .set({ acknowledgedAt: now, ackDeadline: null, updatedAt: now })
       .where(eq(applicationsTable.id, applicationId))
       .returning();
-    if (!updated) throw new Error("Failed to acknowledge application");
+    if (!updated) throw new HttpError(500, "DATABASE_ERROR", "Failed to acknowledge application");
     await logEvent(tx, updated.id, updated.jobId, "ACKNOWLEDGED", {});
     return updated;
   });
@@ -287,7 +288,7 @@ export async function exitApplication(
       .where(eq(applicationsTable.id, applicationId))
       .limit(1);
     const app = existing[0];
-    if (!app) throw new Error(`Application not found: ${applicationId}`);
+    if (!app) throw new NotFoundError(`Application not found: ${applicationId}`);
     const job = await lockJob(tx, app.jobId);
     if (app.state === "EXITED") return { application: app, promoted: 0 };
 
@@ -304,7 +305,7 @@ export async function exitApplication(
       })
       .where(eq(applicationsTable.id, applicationId))
       .returning();
-    if (!updated) throw new Error("Failed to exit application");
+    if (!updated) throw new HttpError(500, "DATABASE_ERROR", "Failed to exit application");
 
     // If a waitlisted applicant exited, compact the queue behind them.
     if (wasWaitlisted && exitedPos != null) {
