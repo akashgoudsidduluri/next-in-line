@@ -7,35 +7,27 @@
  */
 
 import jwt from "jsonwebtoken";
+import { config } from "../lib/config";
 
 const TOKEN_TTL = "7d";
+const secret = config.SESSION_SECRET;
 
 export type CompanyTokenPayload = { role: "company"; companyId: string };
 export type ApplicantTokenPayload = { role: "applicant"; applicantId: string };
 export type TokenPayload = CompanyTokenPayload | ApplicantTokenPayload;
 
-function getSecret(): string {
-  const s = process.env["SESSION_SECRET"] ?? process.env["JWT_SECRET"];
-  if (!s) {
-    throw new Error(
-      "SESSION_SECRET (or JWT_SECRET) must be set to sign auth tokens.",
-    );
-  }
-  return s;
-}
-
 export function signCompanyToken(companyId: string): string {
   const payload: CompanyTokenPayload = { role: "company", companyId };
-  return jwt.sign(payload, getSecret(), { expiresIn: TOKEN_TTL });
+  return jwt.sign(payload, secret, { expiresIn: TOKEN_TTL });
 }
 
 export function signApplicantToken(applicantId: string): string {
   const payload: ApplicantTokenPayload = { role: "applicant", applicantId };
-  return jwt.sign(payload, getSecret(), { expiresIn: TOKEN_TTL });
+  return jwt.sign(payload, secret, { expiresIn: TOKEN_TTL });
 }
 
 export function verifyToken(token: string): TokenPayload {
-  const decoded = jwt.verify(token, getSecret());
+  const decoded = jwt.verify(token, secret);
   if (typeof decoded !== "object" || decoded === null) {
     throw new Error("Malformed token payload");
   }
