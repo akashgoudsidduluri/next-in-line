@@ -1,0 +1,44 @@
+What's Genuinely Fixed ✅
+
+Auth section is thorough — two JWT flows, ownership checks, middleware design all documented
+Replay endpoint shipped and documented properly
+Test suite exists with real concurrency tests (Promise.all against live DB — actually better than mocked)
+Tradeoffs table is comprehensive
+Known limitations are honest and specific
+The "why polling over pg_notify" reasoning is strong
+
+
+Remaining Real Gaps ⚠️
+Critical — Frontend auth is explicitly unfinished:
+
+"The frontend in artifacts/pipeline/ was built before auth was bolted on and currently makes anonymous requests — it shows 401s after this change."
+
+The evaluator will run this locally. If every frontend action returns 401, the pipeline requirement ("applicant can check their status", "company dashboard showing pipeline state") is functionally broken from a demo standpoint. This is the single biggest risk to your score right now.
+State machine inconsistency in the README:
+Section 2 says three states: WAITLISTED, ACTIVE, EXITED — but Section 5 (Replay) surfaces PENDING_ACKNOWLEDGMENT as a contract state. Section 2's transition table shows ACTIVE → WAITLISTED (decay only) which contradicts the flow where ACTIVE with no ack goes through a deadline check. The evaluator reading the README will notice the mismatch. Your friend's explicit PENDING_ACKNOWLEDGMENT state is cleaner here.
+queueEngineExt.ts raises a flag:
+
+"Auth-aware wrappers (additive, engine untouched)"
+
+This suggests auth was bolted on as a separate file rather than integrated. The evaluator's AST analysis will see this and it may read as a seam — two files where one would be cleaner.
+
+One Prompt to Close the Frontend Gap
+This is the only thing left that's materially broken:
+
+The backend auth is complete. The frontend (artifacts/pipeline/) currently makes anonymous requests and gets 401s on every protected route. Wire auth into the frontend without changing any backend code:
+1. Auth context — create src/contexts/AuthContext.tsx with a React context that holds { token, role, identity } and exposes loginAsCompany(token, company), loginAsApplicant(token, applicant), logout(). Store the token in localStorage so it survives a page refresh.
+2. API client — configure the TanStack Query fetch wrapper (or axios instance, whichever is already used) to read the token from the auth context and attach Authorization: Bearer <token> on every request. On 401 response, call logout() and redirect to /login.
+3. Two login/register pages:
+
+/company/login — email + password form, calls POST /api/company/auth/login, stores token, redirects to company dashboard
+/company/register — name + email + password, calls POST /api/company/auth/register, auto-logs in
+/applicant/login and /applicant/register — same pattern for applicant flow
+
+4. Route guards — wrap company dashboard routes with a <RequireCompany> component that redirects to /company/login if no company token. Wrap applicant routes with <RequireApplicant>.
+5. Navigation — add a top nav showing the logged-in name and a logout button. The home page (/) shows two cards: "I'm hiring" → company login, "I'm applying" → applicant login.
+6. After login flows:
+
+Company lands on their job list dashboard, can create jobs, view pipeline, remove applicants
+Applicant lands on job browse page, can apply, see their applications, acknowledge/withdraw
+
+Do not change any backend routes, middleware, or services. Only modify files inside artifacts/pipeline/src/.
