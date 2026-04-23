@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from "vitest";
-import jwt from "jsonwebtoken";
 import {
   signCompanyToken,
   signApplicantToken,
@@ -101,7 +100,9 @@ describe("auth/middleware", () => {
     const { signCompanyToken: _ } = { signCompanyToken };
     const spy = vi.spyOn(Date, "now");
     spy.mockRestore();
-    const bogus = jwt.sign({ role: "weird" }, "temp-secret");
+    const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+    const payload = Buffer.from(JSON.stringify({ role: "weird" })).toString("base64url");
+    const bogus = `${header}.${payload}.invalid-signature`;
     const { err } = runMiddleware(
       requireCompany,
       fakeReq({ authorization: `Bearer ${bogus}` }),
