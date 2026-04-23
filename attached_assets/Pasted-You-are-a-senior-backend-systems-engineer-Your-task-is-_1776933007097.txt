@@ -1,0 +1,272 @@
+You are a senior backend systems engineer. Your task is to design and implement a production-grade internal hiring pipeline system that behaves like a deterministic state machine with queue semantics, not a CRUD app.
+
+This system must be architected to maximize engineering quality signals (architecture, concurrency correctness, traceability, and development clarity), not just functional completeness.
+
+---
+
+# OBJECTIVE
+
+Build a lightweight hiring pipeline tool for small teams that:
+
+* Enforces a strict active capacity per job
+* Automatically manages a waitlist queue
+* Handles concurrency safely
+* Automatically promotes candidates
+* Handles inactivity decay with cascading effects
+* Logs every state transition for full reconstruction
+
+This system must run locally and be implemented using PERN or MERN (prefer PostgreSQL for correctness).
+
+---
+
+# CORE DESIGN REQUIREMENT (CRITICAL)
+
+Treat the system as:
+
+1. A **bounded active queue**
+2. An **ordered waitlist queue**
+3. A **finite state machine with event sourcing**
+
+Every applicant must always be in exactly one state:
+
+* WAITLISTED
+* ACTIVE
+* EXITED
+
+State transitions must NEVER be implicit. Every transition must:
+
+* Be atomic
+* Be logged
+* Be reproducible
+
+---
+
+# HARD REQUIREMENTS
+
+## Queue + Capacity Logic
+
+* Each job has a fixed `capacity`
+* If active count < capacity → applicant becomes ACTIVE
+* Else → applicant is WAITLISTED with a queue position
+* Queue must be strictly ordered and gap-free
+
+---
+
+## Automatic Promotion
+
+When an ACTIVE applicant exits:
+
+* The first WAITLISTED applicant must be promoted automatically
+* Promotion must:
+
+  * Be transactional
+  * Assign an acknowledgement deadline
+  * Trigger further cascade logic if needed
+
+---
+
+## Concurrency Handling (MANDATORY)
+
+Handle:
+“Two applicants apply at the same time for the last available slot”
+
+You MUST:
+
+* Use database transactions
+* Use row-level locking (`SELECT ... FOR UPDATE`)
+* Prevent race conditions deterministically
+
+Document:
+
+* Why this approach works
+* What would break without it
+
+---
+
+## Inactivity Decay (CORE DIFFERENTIATOR)
+
+When a WAITLISTED applicant is promoted to ACTIVE:
+
+* They must acknowledge within a defined time window (e.g., 10 minutes)
+
+If they fail:
+
+* They are NOT removed
+* They are moved back to WAITLIST with a penalty position
+* Next candidate is promoted immediately
+* This must cascade automatically
+
+You must define:
+
+* Decay window
+* Penalty strategy (e.g., +2 positions or end of queue)
+* Trigger mechanism (polling loop or internal scheduler — NO external libraries allowed)
+
+---
+
+## Event Logging (NON-NEGOTIABLE)
+
+Every transition must be logged in an `event_logs` table:
+
+Each log must include:
+
+* application_id
+* event_type (APPLIED, PROMOTED, DECAYED, EXITED, ACKNOWLEDGED)
+* metadata (JSON)
+* timestamp
+
+System must be reconstructable purely from logs.
+
+---
+
+## API DESIGN
+
+Provide fully documented endpoints:
+
+* Create job
+* Apply to job
+* Exit pipeline
+* Acknowledge promotion
+* Get applicant status (status + queue position + deadline)
+* Get company dashboard (active + waitlist)
+
+All responses must be deterministic and consistent.
+
+---
+
+## FRONTEND (MINIMAL BUT DELIBERATE)
+
+Build:
+
+### Company Dashboard
+
+* Active applicants
+* Waitlist with positions
+
+### Applicant View
+
+* Current status
+* Queue position
+* Countdown to deadline (if active)
+
+No real-time required. Choose polling or manual refresh and justify it.
+
+---
+
+# ARCHITECTURE REQUIREMENTS
+
+Use clean separation:
+
+* controllers → request handling
+* services → business logic (QUEUE ENGINE HERE)
+* repositories/data layer → DB queries
+* scheduler/worker → decay + promotion cascade
+
+You MUST isolate queue logic into a dedicated module.
+
+---
+
+# DATABASE DESIGN (STRICT)
+
+Use relational schema (PostgreSQL preferred).
+
+Must include:
+
+* jobs
+* applicants
+* applications (with status + queue_position)
+* event_logs
+
+Queue position must be explicitly stored and maintained.
+
+---
+
+# ENGINEERING QUALITY SIGNALS (VERY IMPORTANT)
+
+Your implementation must clearly demonstrate:
+
+1. Deterministic state transitions
+2. Transactional integrity
+3. Concurrency safety
+4. Clean abstractions (no logic in controllers)
+5. Small, testable functions
+6. Explicit error handling
+7. Consistent naming and structure
+
+---
+
+# TESTING (HIGH IMPACT)
+
+Include tests for:
+
+* Concurrent applications edge case
+* Promotion logic correctness
+* Decay + cascade behavior
+* Queue ordering integrity
+
+---
+
+# README (THIS DECIDES YOUR SCORE)
+
+Write a strong README including:
+
+1. System architecture (diagram or structured explanation)
+2. State machine design
+3. Concurrency strategy (with reasoning)
+4. Decay mechanism and tradeoffs
+5. Queue design decisions
+6. Known limitations
+7. What you'd improve with more time
+
+---
+
+# DEVELOPMENT PROCESS SIGNALS
+
+Simulate a real engineering workflow:
+
+* Make meaningful commits
+* Show iterative improvements
+* Avoid dumping full code in one commit
+* Use descriptive commit messages
+
+---
+
+# CONSTRAINTS
+
+* NO third-party queue systems
+* NO scheduling libraries
+* Logic must be implemented manually
+* Fully runnable locally
+
+---
+
+# OUTPUT FORMAT
+
+Provide:
+
+1. Full project folder structure
+2. Database schema (SQL)
+3. Backend implementation (Express + TypeScript preferred)
+4. Queue engine implementation (core logic)
+5. Scheduler/decay loop implementation
+6. API routes
+7. Sample frontend (minimal React)
+8. README
+
+Focus on correctness, clarity, and system design — not UI.
+
+---
+
+# PRIORITY ORDER
+
+1. Correctness under concurrency
+2. Deterministic state transitions
+3. Clean architecture
+4. Traceability (event logs)
+5. Simplicity over overengineering
+
+---
+
+Do NOT produce a shallow or CRUD-style solution. This must resemble a real backend system that could operate inside a small engineering team.
+
+Think like a systems engineer, not a tutorial generator.

@@ -3,20 +3,25 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Hiring pipeline API — state-machine queue with capacity, decay, and event sourcing.
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: jobs
+    description: Job postings
+  - name: applications
+    description: Applications and queue actions
+  - name: events
+    description: Event log
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +29,161 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /jobs:
+    get:
+      operationId: listJobs
+      tags: [jobs]
+      summary: List all jobs with live counts
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/JobSummary"
+    post:
+      operationId: createJob
+      tags: [jobs]
+      summary: Create a new job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateJobBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+
+  /jobs/{jobId}:
+    get:
+      operationId: getJobDashboard
+      tags: [jobs]
+      summary: Get full company dashboard for a job
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobDashboard"
+
+  /jobs/{jobId}/apply:
+    post:
+      operationId: applyToJob
+      tags: [applications]
+      summary: Apply to a job (atomic, capacity-aware)
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApplyBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplicationStatus"
+
+  /applications/{applicationId}:
+    get:
+      operationId: getApplicationStatus
+      tags: [applications]
+      summary: Get applicant status
+      parameters:
+        - in: path
+          name: applicationId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplicationStatus"
+
+  /applications/{applicationId}/acknowledge:
+    post:
+      operationId: acknowledgeApplication
+      tags: [applications]
+      summary: Acknowledge an active promotion
+      parameters:
+        - in: path
+          name: applicationId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplicationStatus"
+
+  /applications/{applicationId}/exit:
+    post:
+      operationId: exitApplication
+      tags: [applications]
+      summary: Exit the pipeline (triggers cascading promotion)
+      parameters:
+        - in: path
+          name: applicationId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApplicationStatus"
+
+  /jobs/{jobId}/events:
+    get:
+      operationId: listJobEvents
+      tags: [events]
+      summary: Full event log for a job (event sourcing)
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/EventLog"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +191,166 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    ApplicationState:
+      type: string
+      enum: [WAITLISTED, ACTIVE, EXITED]
+
+    EventType:
+      type: string
+      enum: [APPLIED, PROMOTED, ACKNOWLEDGED, DECAYED, EXITED]
+
+    CreateJobBody:
+      type: object
+      required: [title, capacity]
+      properties:
+        title:
+          type: string
+          minLength: 1
+        capacity:
+          type: integer
+          minimum: 1
+        decaySeconds:
+          type: integer
+          minimum: 5
+          description: Acknowledgement window in seconds (default 600)
+
+    Job:
+      type: object
+      required: [id, title, capacity, decaySeconds, createdAt]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        capacity:
+          type: integer
+        decaySeconds:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    JobSummary:
+      allOf:
+        - $ref: "#/components/schemas/Job"
+        - type: object
+          required: [activeCount, waitlistCount]
+          properties:
+            activeCount:
+              type: integer
+            waitlistCount:
+              type: integer
+
+    ApplyBody:
+      type: object
+      required: [name, email]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        email:
+          type: string
+          format: email
+
+    ApplicationStatus:
+      type: object
+      required: [id, jobId, applicantName, applicantEmail, state, queuePosition, createdAt]
+      properties:
+        id:
+          type: string
+        jobId:
+          type: string
+        applicantName:
+          type: string
+        applicantEmail:
+          type: string
+        state:
+          $ref: "#/components/schemas/ApplicationState"
+        queuePosition:
+          type: integer
+          nullable: true
+          description: 1-based queue position when WAITLISTED, null otherwise
+        ackDeadline:
+          type: string
+          format: date-time
+          nullable: true
+          description: Acknowledgement deadline when ACTIVE and unacknowledged
+        acknowledgedAt:
+          type: string
+          format: date-time
+          nullable: true
+        decayCount:
+          type: integer
+          description: How many times this applicant has decayed
+        createdAt:
+          type: string
+          format: date-time
+
+    DashboardApplication:
+      type: object
+      required: [id, applicantName, applicantEmail, state, decayCount, createdAt]
+      properties:
+        id:
+          type: string
+        applicantName:
+          type: string
+        applicantEmail:
+          type: string
+        state:
+          $ref: "#/components/schemas/ApplicationState"
+        queuePosition:
+          type: integer
+          nullable: true
+        ackDeadline:
+          type: string
+          format: date-time
+          nullable: true
+        acknowledgedAt:
+          type: string
+          format: date-time
+          nullable: true
+        decayCount:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    JobDashboard:
+      type: object
+      required: [job, active, waitlist, recentEvents]
+      properties:
+        job:
+          $ref: "#/components/schemas/JobSummary"
+        active:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardApplication"
+        waitlist:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardApplication"
+        recentEvents:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventLog"
+
+    EventLog:
+      type: object
+      required: [id, applicationId, jobId, eventType, metadata, createdAt]
+      properties:
+        id:
+          type: string
+        applicationId:
+          type: string
+        jobId:
+          type: string
+        eventType:
+          $ref: "#/components/schemas/EventType"
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time

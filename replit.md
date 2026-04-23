@@ -1,8 +1,15 @@
-# Workspace
+# Hiring Pipeline
 
 ## Overview
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+Internal hiring pipeline tool — deterministic state machine with bounded active queue,
+ordered waitlist, automatic promotion + cascading decay, and full event-sourced audit log.
+See README.md for architecture, concurrency strategy, and design rationale.
+
+Artifacts:
+- `artifacts/api-server` — Express 5 API; queue engine in `src/services/queueEngine.ts`,
+  internal decay scheduler in `src/scheduler/decayLoop.ts`.
+- `artifacts/pipeline` — React + Vite frontend (recruiter dashboard + applicant view).
 
 ## Stack
 
