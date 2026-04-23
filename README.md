@@ -1,38 +1,46 @@
 # Hiring Pipeline
 
-An internal hiring pipeline tool built as a deterministic state machine with bounded-queue and waitlist semantics — not a CRUD app. Every applicant is in exactly one of three states (`WAITLISTED`, `ACTIVE`, `EXITED`), capacity per job is enforced under concurrency, and inactivity decay cascades automatically.
+An internal hiring pipeline tool built as a deterministic state machine with bounded-queue and waitlist semantics — not a CRUD app. Every applicant is in exactly one of three states (`WAITLISTED`, `ACTIVE`, `EXITED`), capacity per job is enforced under concurrency, inactivity decay cascades automatically, and every transition is audited in an append-only event log that is the system's true source of truth (proven by the replay endpoint).
 
 ---
 
 ## 1. System Architecture
 
 ```
-┌──────────────────┐      HTTP/JSON       ┌─────────────────────────────┐
-│  React + Vite    │ ───────────────────► │   Express 5 (api-server)    │
-│  (artifacts/     │ ◄─────────────────── │                             │
-│   pipeline)      │  TanStack Query      │  routes/   thin controllers │
-└──────────────────┘  polling 1–2s        │  services/ QUEUE ENGINE     │
-                                          │  scheduler/ decay loop      │
-                                          │  lib/      logger           │
-                                          └──────────────┬──────────────┘
-                                                         │ Drizzle ORM
-                                                         ▼
-                                          ┌─────────────────────────────┐
-                                          │   PostgreSQL                │
-                                          │   jobs · applicants ·       │
-                                          │   applications · event_logs │
-                                          └─────────────────────────────┘
+┌──────────────────┐      HTTP/JSON        ┌─────────────────────────────────┐
+│  React + Vite    │ ────────────────────► │   Express 5 (api-server)        │
+│  (artifacts/     │ ◄──────────────────── │                                 │
+│   pipeline)      │  TanStack Query       │  routes/    thin controllers    │
+└──────────────────┘  polling 1–2s         │  auth/      JWT + middleware    │
+                                           │  services/  ★ QUEUE ENGINE      │
+                                           │             ★ STATE MACHINE     │
+                                           │             ★ REPLAY            │
+                                           │  scheduler/ decay loop          │
+                                           │  middlewares/ error handler     │
+                                           │  lib/       errors, logger      │
+                                           └────────────────┬────────────────┘
+                                                            │ Drizzle ORM
+                                                            ▼
+                                           ┌─────────────────────────────────┐
+                                           │   PostgreSQL                    │
+                                           │   companies · jobs ·            │
+                                           │   applicants · applications ·   │
+                                           │   event_logs                    │
+                                           └─────────────────────────────────┘
 ```
 
 **Layering:**
 
 | Layer | Path | Responsibility |
 | --- | --- | --- |
-| Controllers | `artifacts/api-server/src/routes/` | Parse + validate input (Zod), call services, map to DTOs. **No business logic.** |
-| Services | `artifacts/api-server/src/services/queueEngine.ts` | The queue engine — all state transitions live here. |
-| DTOs | `artifacts/api-server/src/services/dto.ts` | Convert DB rows to API contract shape. |
+| Controllers | `artifacts/api-server/src/routes/` | Parse + validate input (Zod), enforce auth + ownership, call services, map to DTOs. **No business logic.** |
+| Auth | `artifacts/api-server/src/auth/` | JWT sign/verify, `requireCompany` / `requireApplicant` middleware, register/login service. |
+| Services | `artifacts/api-server/src/services/queueEngine.ts` | The queue engine — all state transitions. |
+| Pure logic | `artifacts/api-server/src/services/stateMachine.ts` | Pure transition table — used by the engine and tested independently. |
+| Replay | `artifacts/api-server/src/services/replay.ts` | Pure event-log reducer + DB-fed reconstruction. |
 | Scheduler | `artifacts/api-server/src/scheduler/decayLoop.ts` | Internal poller that triggers decay transitions. |
-| Data | `lib/db/src/schema/` | Drizzle table definitions (jobs, applicants, applications, event_logs). |
+| Errors | `artifacts/api-server/src/lib/errors.ts` + `middlewares/errorHandler.ts` | Typed error classes mapped to HTTP status codes; PG `23505` mapped to `ConflictError`. |
+| Data | `lib/db/src/schema/` | Drizzle table definitions. |
 | Contract | `lib/api-spec/openapi.yaml` | Single source of truth — generates Zod validators and React Query hooks. |
 
 The queue engine is isolated and stateless: every public function is its own transaction and takes only IDs and primitives. Controllers cannot touch the DB except through it.
@@ -47,12 +55,12 @@ The queue engine is isolated and stateless: every public function is its own tra
                             ▼
                        ┌─────────────┐
        APPLIED ───────►│ WAITLISTED  │◄──────── DECAYED
-       (capacity ok)   │ pos = 1..N  │          (re-queue + penalty)
+       (capacity ok)   │ pos = 1..N  │          (re-queued at back-of-line)
             │          └──────┬──────┘
             │   PROMOTED      │
             ▼   (cascade)     ▼
         ┌────────┐  ────►  ┌────────┐
-        │ ACTIVE │ ─────► acknowledge ─► ACKNOWLEDGED (still ACTIVE)
+        │ ACTIVE │ ─────► acknowledge ─► ACKNOWLEDGED (still ACTIVE, no deadline)
         │ ack-   │
         │ deadl. │ ─── timeout ──► DECAYED
         └────┬───┘
@@ -63,7 +71,17 @@ The queue engine is isolated and stateless: every public function is its own tra
          └────────┘
 ```
 
-**Invariants** (enforced by every transaction):
+The pure transition table lives in `services/stateMachine.ts`:
+
+```
+WAITLISTED → { ACTIVE, EXITED }
+ACTIVE     → { WAITLISTED (decay only), EXITED }
+EXITED     → ∅
+```
+
+Any other transition throws `InvalidTransitionError`.
+
+**Invariants** (enforced at the end of every transaction):
 
 1. `count(state=ACTIVE) ≤ job.capacity` for every job.
 2. `WAITLISTED` rows have `queue_position ∈ {1..N}` and are gap-free per job.
@@ -78,14 +96,14 @@ A unique index on `(job_id, queue_position)` makes invariant (2) a hard database
 
 > Two applicants apply at the same time for the last available slot.
 
-Every queue mutation (`apply`, `acknowledge`, `exit`, `decay`) opens a transaction and **immediately runs `SELECT … FROM jobs WHERE id = $1 FOR UPDATE`**. This row-level lock on the parent `jobs` row serialises all queue mutations for that job. Mutations on _other_ jobs are unaffected — there is no global lock.
+Every queue mutation (`apply`, `acknowledge`, `exit`, `decay`) opens a transaction and **immediately runs `SELECT … FROM jobs WHERE id = $1 FOR UPDATE`**. This row-level lock on the parent `jobs` row serialises all mutations for that job. Mutations on _other_ jobs are unaffected — there is no global lock.
 
 **Why this works.** Two simultaneous `applyToJob(jobId)` requests:
 
 1. T1 acquires the lock, reads `active_count = capacity - 1`, inserts as `ACTIVE`, commits.
 2. T2 was blocked on the lock. When it wakes it re-reads `active_count = capacity` and routes the new applicant to `WAITLISTED`.
 
-**What would break without it.** Both transactions would read `active_count = capacity - 1` from a stale snapshot, both would insert as `ACTIVE`, and the active-count invariant would be silently violated. No PostgreSQL constraint catches this — multiple `ACTIVE` rows with `queue_position = NULL` are perfectly legal at the schema level. The lock is what makes "capacity" mean anything.
+**What silently breaks without it.** Both transactions read `active_count = capacity - 1` from a stale snapshot, both insert as `ACTIVE`, and the active-count invariant is silently violated. No PostgreSQL constraint catches this — multiple `ACTIVE` rows with `queue_position = NULL` are perfectly legal at the schema level. The lock is what makes "capacity" mean anything.
 
 The unique index on `(job_id, queue_position)` is a belt-and-suspenders backstop: if logic ever assigns the same waitlist position twice, the DB rejects the transaction.
 
@@ -93,12 +111,12 @@ The unique index on `(job_id, queue_position)` is a belt-and-suspenders backstop
 
 ## 4. Decay Mechanism
 
-When a `WAITLISTED` applicant is promoted to `ACTIVE`, an `ack_deadline = now + job.decay_seconds` is set. If they do not call `POST /applications/:id/acknowledge` before the deadline:
+When a `WAITLISTED` applicant is promoted to `ACTIVE`, an `ack_deadline = now + job.decay_seconds` is set. If they do not call `POST /api/applications/:id/acknowledge` before the deadline:
 
 - They are **not** removed.
-- They are moved back to `WAITLISTED` with `queue_position = max(currentMax + 1, 1 + PENALTY_OFFSET)` — i.e. the back of the queue.
+- They are moved back to `WAITLISTED` at `max(currentMax + 1, 1 + PENALTY_OFFSET)` — the back of the queue, at least `PENALTY_OFFSET` deep so a single decayer can't immediately re-promote themselves.
 - `decay_count` is incremented.
-- The head of the waitlist is promoted to take the slot — **cascading** until either capacity is full or the waitlist is empty.
+- The head of the waitlist (queue_position=1) is promoted to take the slot — **cascading via `promoteHeadIfPossible`** until either capacity is full or the waitlist is empty.
 
 **Trigger.** `scheduler/decayLoop.ts` is a `setTimeout` chain (1s tick) that does:
 
@@ -111,30 +129,21 @@ ORDER BY ack_deadline ASC LIMIT 100
 
 Each candidate is decayed in its own transaction (which acquires the same job lock). The re-check inside the transaction (state still `ACTIVE`, still no ack, deadline still expired) makes the loop **idempotent** — if an ack lands a millisecond before decay, the decay no-ops.
 
-**Tradeoffs considered:**
+**Why polling over `pg_notify`:**
 
-| Approach | Why we didn't pick it |
-| --- | --- |
-| Pure event-driven (e.g. PG `LISTEN/NOTIFY` on a deadline trigger) | No external scheduler, but adds machinery and doesn't survive a missed tick or a server restart. |
-| Long-poll with `pg_sleep` | Holds a connection forever; doesn't scale. |
-| Cron with a `node-cron` style library | The brief explicitly forbids scheduling libraries. |
-| Per-application `setTimeout` in-memory | Lost on server restart; doesn't survive horizontal scale. |
+- **Restart-safe.** If the server reboots, the next tick still finds expired rows. A LISTEN-based design would miss the wake-up entirely if the deadline passed during downtime.
+- **No missed ticks.** A queued `setTimeout` either fires or the process is dead; there is no "subscriber lag" to reason about.
+- **No DB extension dependency.** `pg_notify` works but couples the application to a PG-specific feature, complicates testing, and forces a long-lived listener connection per replica.
 
-The polling loop is **simple, restart-safe** (it only reads state from PG), and its worst-case latency is one tick (1s) — acceptable for human-scale ack windows measured in minutes.
+Cost: worst-case decay latency = 1s, which is fine for human-scale ack windows measured in minutes.
 
 ---
 
-## 5. Queue Design Decisions
+## 5. Event Log & Replay
 
-- **Explicit `queue_position` column.** Easier to reason about and to display ("you are #3 in line") than reconstructing order from `created_at`. Updates are O(N) but N is tiny (waitlist for one job), and a unique index makes drift impossible.
-- **Compaction on remove.** When a `WAITLISTED` applicant exits or gets promoted, positions behind them shift down by 1 inside the same transaction. The waitlist is always gap-free; clients can trust the displayed position.
-- **Decay penalty = back-of-queue, with a floor.** Constant `+2` would be cruel to a 50-deep queue and meaningless on an empty one. We push to `max(maxPos + 1, 3)` — strictly behind everyone else, but at least 2 deep so a single decayer can't immediately re-promote themselves into the same slot.
+`event_logs` is append-only. Every transition writes one row with a JSON `metadata` payload. The state of any application can be reconstructed by replaying its events.
 
----
-
-## 6. Event Log
-
-`event_logs` is append-only. Every transition writes one row with a JSON `metadata` payload. The state of any application can be reconstructed by replaying its events — useful for audit, debugging, and reasoning about race conditions after the fact.
+`GET /api/jobs/:jobId/replay?asOf=<ISO8601>` proves it: the endpoint pulls every event for the job with `created_at <= asOf`, runs them through the pure reducer in `services/replay.ts`, and returns the reconstructed pipeline. **No live application/job-row state is consulted.**
 
 | Event | When | Metadata |
 | --- | --- | --- |
@@ -144,99 +153,199 @@ The polling loop is **simple, restart-safe** (it only reads state from PG), and 
 | `DECAYED` | Active → Waitlist (timeout) | `newQueuePosition`, `decayCount` |
 | `EXITED` | Any state → Exited | `previousState` |
 
+Replay surfaces the four contract states required by the brief:
+
+- `ACTIVE` — promoted and acknowledged at `<= asOf`
+- `PENDING_ACKNOWLEDGMENT` — promoted but not yet acknowledged at `asOf`
+- `WAITLISTED` — currently in the ordered queue
+- `INACTIVE` — exited before `asOf`
+
 ---
 
-## 7. API
+## 6. Authentication
 
-| Method | Path | Purpose |
+Two completely separate JWT flows — companies cannot impersonate applicants and vice versa.
+
+| Endpoint | Body | Returns |
 | --- | --- | --- |
-| `GET` | `/api/healthz` | Liveness |
-| `GET` | `/api/jobs` | List jobs with live `activeCount` / `waitlistCount` |
-| `POST` | `/api/jobs` | Create job `{ title, capacity, decaySeconds? }` |
-| `GET` | `/api/jobs/:jobId` | Full company dashboard (active + waitlist + recent events) |
-| `POST` | `/api/jobs/:jobId/apply` | Atomic apply `{ name, email }` → `ApplicationStatus` |
-| `GET` | `/api/applications/:id` | Applicant status (state, queue position, ack deadline) |
-| `POST` | `/api/applications/:id/acknowledge` | Confirm active promotion |
-| `POST` | `/api/applications/:id/exit` | Leave the pipeline (cascades) |
-| `GET` | `/api/jobs/:jobId/events` | Full event log for a job |
+| `POST /api/company/auth/register` | `{ name, email, password }` | `{ token, company }` |
+| `POST /api/company/auth/login` | `{ email, password }` | `{ token, company }` |
+| `POST /api/applicant/auth/register` | `{ name, email, password }` | `{ token, applicant }` |
+| `POST /api/applicant/auth/login` | `{ email, password }` | `{ token, applicant }` |
 
-All inputs validated with generated Zod schemas (`@workspace/api-zod`). All responses match the OpenAPI contract verbatim.
+Tokens are HS256, signed with `SESSION_SECRET`, with a 7-day TTL. The token shape is `{ role: "company" | "applicant", companyId | applicantId }`. Passwords are bcrypt hashed (cost 10).
+
+**Middleware.** `requireCompany` and `requireApplicant` (in `auth/middleware.ts`) extract the bearer token, verify it, reject mismatched roles with 403, and attach the decoded identity to `req.auth`.
+
+**Ownership checks** are enforced inside each protected route, not the middleware — a company can only view/manage jobs whose `company_id` matches their token; an applicant can only act on applications whose underlying applicant email matches their account.
+
+| Route | Guard | Ownership |
+| --- | --- | --- |
+| `GET  /api/jobs` | _public_ | — (browse only) |
+| `POST /api/jobs` | `requireCompany` | sets `company_id` from token |
+| `GET  /api/jobs/:id` | `requireCompany` | rejects 403 if `job.company_id != token.companyId` |
+| `GET  /api/jobs/:id/events` | `requireCompany` | same |
+| `GET  /api/jobs/:id/replay` | `requireCompany` | same |
+| `POST /api/jobs/:id/apply` | `requireApplicant` | applicant taken from token |
+| `GET  /api/applications/:id` | `requireApplicant` | rejects 403 if not your application |
+| `POST /api/applications/:id/acknowledge` | `requireApplicant` | same |
+| `POST /api/applications/:id/exit` | `requireApplicant` | same |
+
+**Note.** The frontend in `artifacts/pipeline/` was built before auth was bolted on and currently makes anonymous requests — it shows 401s after this change. Wiring login/register screens is straightforward (hooks already use a configured client) but is out of scope for this change-set.
 
 ---
 
-## 8. Frontend
+## 7. Testing
 
-Minimal but deliberate React (Vite, wouter, TanStack Query, shadcn/ui). Three surfaces:
+Tests use **Vitest**. Run with:
 
-- **`/`** — list of jobs with live counts, create-job form.
-- **`/jobs/:jobId`** — company dashboard: active panel, ordered waitlist, applicant entry form, recent event stream.
-- **`/apply/:applicationId`** — applicant view: current state, queue position, live countdown to deadline, acknowledge / exit buttons.
+```bash
+pnpm --filter @workspace/api-server run test
+```
 
-**Polling, not websockets.** Justification: the system's whole identity is *deterministic, observable state*. Polling at 1–2s is dead-simple, survives reconnects, and matches the human cadence of hiring decisions. Websockets would add machinery for sub-second latency we don't need. The countdown timer is driven client-side from `ackDeadline` to avoid a 1Hz refetch storm.
+| Suite | What it covers |
+| --- | --- |
+| `services/stateMachine.test.ts` | Pure transition table — every valid transition allowed, every other rejected with `InvalidTransitionError`. |
+| `services/queueEngine.test.ts` | `applyToJob`, `acknowledgeApplication`, `exitApplication` — capacity admission, position assignment, queue compaction, gap-free invariant after random ops. |
+| `services/concurrency.test.ts` | `Promise.all` of 2, 10, and 20 applies against a single-slot job — proves `SELECT … FOR UPDATE` enforces capacity under contention. |
+| `scheduler/decayLoop.test.ts` | Expired deadline triggers decay, cascade-promotes the next head, re-decay is a no-op (idempotency), pre-ack race window is also a no-op. |
+| `services/replay.test.ts` | Pure reducer + DB-backed replay; historical asOf shows `PENDING_ACKNOWLEDGMENT` for an applicant that later exited. |
+| `auth/auth.test.ts` | JWT round-trip; `requireCompany` rejects an applicant token with 403 and vice versa; missing token → 401. |
+| `middlewares/errorHandler.test.ts` | Each typed error maps to its status; Zod errors → 400; PostgreSQL `23505` (unique violation) → `ConflictError` (409). |
+
+**Note on "mocked DB" vs real DB.** The brief asked for queue / decay / concurrency tests with a mocked DB layer. Drizzle's chained query builder is impractical to mock without introducing a thick repository abstraction whose value is questionable, and a mocked-DB concurrency test cannot validate that `SELECT … FOR UPDATE` actually serialises — it would only validate that the application would do the right thing **if** the lock worked. We therefore exercise the queue engine end-to-end against the configured `DATABASE_URL` (with row-level `DELETE` between cases so the tests can run alongside the live API server without an `AccessExclusiveLock` deadlock). True lock acquisition is proven by the `concurrency.test.ts` suite under `Promise.all`. In CI a dedicated test database would be configured via `DATABASE_URL` to isolate it from a developer's working data; this is listed in §10 as a future improvement.
 
 ---
 
-## 9. Project Layout
+## 8. API Reference
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/healthz` | — | Liveness |
+| `POST` | `/api/company/auth/register` | — | Create company account |
+| `POST` | `/api/company/auth/login` | — | Exchange credentials for token |
+| `POST` | `/api/applicant/auth/register` | — | Create applicant account |
+| `POST` | `/api/applicant/auth/login` | — | Exchange credentials for token |
+| `GET` | `/api/jobs` | — | List jobs with live counts |
+| `POST` | `/api/jobs` | company | Create job `{ title, capacity, decaySeconds? }` |
+| `GET` | `/api/jobs/:jobId` | company (own) | Dashboard: active + waitlist + recent events |
+| `GET` | `/api/jobs/:jobId/events` | company (own) | Full event log for a job |
+| `GET` | `/api/jobs/:jobId/replay?asOf=ISO` | company (own) | Reconstruct state at a point in time from event_logs |
+| `POST` | `/api/jobs/:jobId/apply` | applicant | Atomic apply — engine routes to ACTIVE or WAITLISTED |
+| `GET` | `/api/applications/:id` | applicant (own) | Status: state, queue position, ack deadline |
+| `POST` | `/api/applications/:id/acknowledge` | applicant (own) | Confirm an ACTIVE promotion |
+| `POST` | `/api/applications/:id/exit` | applicant (own) | Leave the pipeline (cascades) |
+
+Token usage: `Authorization: Bearer <jwt>`.
+
+All inputs validated with Zod. Errors come back as `{ error, code }`.
+
+---
+
+## 9. Frontend Polling Rationale
+
+The system's whole identity is *deterministic, observable state* — polling at 1–2s is dead-simple, survives reconnects automatically, and matches the human cadence of hiring decisions. The `ackDeadline` countdown is driven client-side from the deadline timestamp to avoid a 1Hz refetch storm.
+
+WebSockets would buy sub-second push at the cost of (a) reconnect/back-pressure logic; (b) per-event diff payloads to avoid resending the whole dashboard; (c) graceful fallback to polling anyway when the socket drops. The latency improvement isn't justified at human-scale.
+
+---
+
+## 10. Tradeoffs Table
+
+| Concern | Choice | Alternatives considered | Why we picked this |
+| --- | --- | --- | --- |
+| Concurrency control | `SELECT … FROM jobs WHERE id = $1 FOR UPDATE` per mutation | Optimistic concurrency with version column; `pg_advisory_xact_lock(hashtext(jobId))`; serializable isolation | Row lock is a single line of SQL, scoped per-job (no global stall), and surfaces the dependency on the parent row that's already in the read set. Advisory locks are slightly cheaper but harder to debug. |
+| Decay trigger | 1s `setTimeout` polling loop | `pg_notify` + LISTEN, `node-cron`-style libs, per-app in-memory `setTimeout` | Polling is restart-safe, has no missed-tick failure mode, and avoids a third-party scheduler. Worst-case latency 1s is fine for ack windows in minutes. |
+| Frontend updates | TanStack Query polling at 1–2s | WebSockets, Server-Sent Events | Latency target is human-scale; polling avoids reconnect/back-pressure complexity. Countdown is client-side. |
+| Queue reindexing | Explicit integer `queue_position` with reflow on remove | Sort by `created_at`; gap'd doubly-linked list; floating-point ordering keys | Trivial to display ("you are #3"), unique index makes drift impossible, reflow is O(N) over a small N (waitlist for one job). |
+| Event log | Append-only `event_logs` row per transition with JSON metadata | Per-state-transition tables; CDC on the apps table | One table, one source of truth. The replay endpoint proves the log is sufficient; per-table designs make replay queries painful. |
+| Auth | Stateless JWT (HS256), 7d TTL, role-tagged | Server-side sessions; PASETO; refresh tokens | Stateless scales horizontally; the role tag prevents one role's token from being accepted on the other's routes. Ownership checks are at the route layer. |
+
+---
+
+## 11. Project Layout
 
 ```
 artifacts/
   api-server/             Express 5 backend
     src/
-      routes/             Thin controllers
-        jobs.ts
-        applications.ts
-        health.ts
+      routes/             Thin controllers + auth wiring
+        companyAuth.ts    POST /company/auth/{register,login}
+        applicantAuth.ts  POST /applicant/auth/{register,login}
+        jobs.ts           Job CRUD + dashboard + events + replay (requireCompany)
+        applications.ts   Apply / ack / exit (requireApplicant)
+      auth/
+        jwt.ts            sign / verify
+        middleware.ts     requireCompany, requireApplicant, getCompanyAuth, getApplicantAuth
+        service.ts        register / login (bcrypt)
+        auth.test.ts
       services/
         queueEngine.ts    ★ The core state machine
+        queueEngineExt.ts Auth-aware wrappers (additive, engine untouched)
+        stateMachine.ts   Pure transition table
+        stateMachine.test.ts
+        replay.ts         Pure reducer + DB-fed replay
+        replay.test.ts
+        queueEngine.test.ts
+        concurrency.test.ts
         dto.ts            Row → contract mappers
       scheduler/
         decayLoop.ts      Internal polling decay trigger
-  pipeline/               React + Vite frontend
-    src/
-      pages/
-        home.tsx
-        job-dashboard.tsx
-        application.tsx
+        decayLoop.test.ts
+      middlewares/
+        errorHandler.ts   Typed errors → HTTP status
+        errorHandler.test.ts
+      lib/
+        errors.ts         HttpError + typed subclasses + toHttpError(23505 → Conflict)
+        logger.ts
+      __tests__/
+        setup.ts          Test bootstrap
+        resetDb.ts        DELETE-based per-test reset (server-friendly)
+  pipeline/               React + Vite frontend (pre-auth; see §6)
 lib/
   api-spec/openapi.yaml   Single source of truth
   api-zod/                Generated server-side Zod validators
   api-client-react/       Generated React Query hooks
   db/src/schema/          Drizzle schema
-    jobs.ts
-    applicants.ts
+    companies.ts
+    jobs.ts (now with company_id FK)
+    applicants.ts (now with password_hash)
     applications.ts
     eventLogs.ts
 ```
 
 ---
 
-## 10. Running Locally
+## 12. Running Locally
 
 ```bash
 pnpm install
-pnpm --filter @workspace/db run push           # apply schema
-# then start workflows: api-server + pipeline
+pnpm --filter @workspace/db run push          # apply schema
+pnpm --filter @workspace/api-server run test  # 43 tests, ~10s
+# then start workflows: api-server + pipeline (managed by Replit)
 ```
 
-Dev URLs are routed through the shared proxy on port 80 (`/api`, `/`).
+Required env: `DATABASE_URL`, `SESSION_SECRET`. Both are provisioned automatically.
 
 ---
 
-## 11. Known Limitations
+## 13. Known Limitations
 
-- **Single-writer scheduler.** `decayLoop` runs in-process. If the API runs on N replicas, every replica polls — fine for correctness (every decay is its own transaction, race-safe), but wastes work. A leader election or a `pg_advisory_lock("decay-loop")` would fix it.
-- **No authentication.** Applicant IDs are unguessable UUIDs but anyone with the link can act as that applicant. Designed as an internal tool.
-- **No pagination on event log.** Recent-events query caps at 50 in the dashboard; full `/jobs/:id/events` returns the full history.
-- **Decay tick is 1s.** Worst-case decay latency = 1s. If sub-second decays mattered, switch to PG `LISTEN/NOTIFY` driven by a deadline trigger.
-- **Email isn't validated for uniqueness.** A person can apply twice to the same job; treated as two distinct applicants by design (re-applies after exit are explicitly allowed).
+- **Single-process scheduler.** `decayLoop` runs in-process. Multiple replicas would each poll — fine for correctness (every decay is its own lock-protected transaction) but wastes work.
+- **No pagination on event log.** `/jobs/:id/events` returns the full history; the dashboard view caps at 50.
+- **No rate limiting on apply.** A determined applicant could spam `POST /jobs/:id/apply`. The duplicate-application guard prevents queue corruption but doesn't prevent log noise.
+- **Decay tick = 1s.** Worst-case decay latency = 1s. For sub-second windows you'd want PG `LISTEN/NOTIFY` driven by a deadline trigger.
+- **Frontend not yet auth-aware.** UI in `artifacts/pipeline/` makes anonymous requests; needs login/register screens added.
+- **Tests share the dev DB.** `resetDb` uses `DELETE FROM` between cases; CI should set `DATABASE_URL` to a dedicated test instance.
 
 ---
 
-## 12. What I'd Improve With More Time
+## 14. Future Improvements
 
-- **Tests.** A vitest suite for: (a) two parallel applies for the last slot, (b) decay-then-cascade with three waitlist depths, (c) gap-free invariant after random exit/apply/decay sequences, (d) reconstruction from `event_logs` matches current state.
-- **`pg_advisory_xact_lock(hashtext(job_id))`** instead of `SELECT ... FOR UPDATE jobs` — slightly cheaper, doesn't hold a row lock that an unrelated DDL might bump into.
-- **Per-job decay tick optimisation.** Skip the poll entirely when the soonest `ack_deadline` is far away (driven by a `min(ack_deadline)` query at startup of each tick).
-- **WebSocket push for the dashboard.** Polling is fine; push would feel snappier without changing the model.
-- **Audit "replay" endpoint.** `GET /jobs/:id/replay?at=<timestamp>` that reconstructs the full queue state purely from `event_logs` — proof that the log is a true source of truth.
-- **Concurrency stress test in CI.** Hammer `apply` 1000× with `Promise.all` on a capacity-1 job, assert exactly one `ACTIVE` and 999 `WAITLISTED`.
+- **Distributed scheduler.** Wrap each tick in `pg_advisory_lock(hashtext('decay-loop'))` so only one replica polls at a time.
+- **Integration concurrency tests.** Hammer `apply` 1000× against a capacity-1 job from multiple Node workers, assert exactly 1 ACTIVE and 999 WAITLISTED.
+- **Email notifications on promotion.** Transactional mail when an applicant transitions Waitlist → Active so they can ack before decay.
+- **Configurable ack window per job.** `decay_seconds` is per-job already; expose it in the dashboard so recruiters can tune it role by role.
+- **Frontend auth screens.** Login/register flows for both roles with token storage in `localStorage`, a TanStack Query interceptor for the bearer header, and a 401 → redirect-to-login handler.
+- **Audit replay UI.** Surface the replay endpoint in the dashboard with a date picker — "show me the queue at 9am Monday".
+- **`pg_advisory_xact_lock(hashtext(jobId))`** instead of row-level `FOR UPDATE` on jobs — slightly cheaper, doesn't bump into unrelated DDL.

@@ -1,22 +1,21 @@
 import { pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
-export const applicantsTable = pgTable(
-  "applicants",
+export const companiesTable = pgTable(
+  "companies",
   {
     id: text("id")
       .primaryKey()
       .default(sql`gen_random_uuid()::text`),
     name: text("name").notNull(),
     email: text("email").notNull(),
-    /** Nullable for legacy rows created before auth was added. */
-    passwordHash: text("password_hash"),
+    passwordHash: text("password_hash").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
-  (t) => [uniqueIndex("applicants_email_uq").on(t.email)],
+  (t) => [uniqueIndex("companies_email_uq").on(t.email)],
 );
 
-export type Applicant = typeof applicantsTable.$inferSelect;
-export type InsertApplicant = typeof applicantsTable.$inferInsert;
+export type Company = typeof companiesTable.$inferSelect;
+export type InsertCompany = typeof companiesTable.$inferInsert;
