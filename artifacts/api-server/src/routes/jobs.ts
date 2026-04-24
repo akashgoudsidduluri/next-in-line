@@ -1,11 +1,12 @@
 import { Router, type IRouter } from "express";
 import { sql, eq } from "drizzle-orm";
-import { db, jobsTable, eventLogsTable } from "@workspace/db";
+import { eventLogsTable } from "@workspace/db";
 import { CreateJobBody } from "@workspace/api-zod";
-import { toJobDto, toEventLogDto, toDashboardApplicationDto } from "../services/dto";
+import { toEventLogDto, toDashboardApplicationDto, toJobDto } from "../services/dto";
 import { getJobDashboard } from "../services/queueEngine";
 import { jobBelongsToCompany } from "../services/queueEngineExt";
 import { replayJob } from "../services/replay";
+import * as jobService from "../services/jobService";
 import { requireCompany, getCompanyAuth } from "../auth/middleware";
 import { ForbiddenError, NotFoundError, BadRequestError } from "../lib/errors";
 
@@ -14,34 +15,8 @@ const router: IRouter = Router();
 /** Public — list jobs with live counts so applicants can browse. */
 router.get("/jobs", async (_req, res, next) => {
   try {
-    const rows = await db.execute<{
-      id: string;
-      title: string;
-      capacity: number;
-      decay_seconds: number;
-      created_at: Date;
-      active_count: string;
-      waitlist_count: string;
-    }>(sql`
-      SELECT j.id, j.title, j.capacity, j.decay_seconds, j.created_at,
-        COALESCE(SUM(CASE WHEN a.state = 'ACTIVE' THEN 1 ELSE 0 END), 0)::text AS active_count,
-        COALESCE(SUM(CASE WHEN a.state = 'WAITLISTED' THEN 1 ELSE 0 END), 0)::text AS waitlist_count
-      FROM jobs j
-      LEFT JOIN applications a ON a.job_id = j.id
-      GROUP BY j.id
-      ORDER BY j.created_at DESC
-    `);
-    res.json(
-      rows.rows.map((r) => ({
-        id: r.id,
-        title: r.title,
-        capacity: Number(r.capacity),
-        decaySeconds: Number(r.decay_seconds),
-        createdAt: new Date(r.created_at).toISOString(),
-        activeCount: Number(r.active_count),
-        waitlistCount: Number(r.waitlist_count),
-      })),
-    );
+    const jobs = await jobService.listJobsWithCounts();
+    res.json(jobs);
   } catch (err) {
     next(err);
   }
@@ -51,17 +26,13 @@ router.post("/jobs", requireCompany, async (req, res, next) => {
   try {
     const body = CreateJobBody.parse(req.body);
     const auth = getCompanyAuth(req);
-    const [job] = await db
-      .insert(jobsTable)
-      .values({
-        title: body.title,
-        capacity: body.capacity,
-        decaySeconds: body.decaySeconds ?? 600,
-        companyId: auth.companyId,
-      })
-      .returning();
-    if (!job) throw new Error("Failed to create job");
-    res.status(201).json(toJobDto(job));
+    const job = await jobService.createJob({
+      title: body.title,
+      capacity: body.capacity,
+      decaySeconds: body.decaySeconds ?? 600,
+      companyId: auth.companyId,
+    });
+    res.status(201).json(job);
   } catch (err) {
     next(err);
   }
@@ -102,12 +73,8 @@ router.get("/jobs/:jobId/events", requireCompany, async (req, res, next) => {
     const owns = await jobBelongsToCompany(jobId, auth.companyId);
     if (!owns) throw new ForbiddenError("Not your job");
 
-    const rows = await db
-      .select()
-      .from(eventLogsTable)
-      .where(eq(eventLogsTable.jobId, jobId))
-      .orderBy(sql`created_at DESC`);
-    res.json(rows.map(toEventLogDto));
+    const events = await jobService.getJobEvents(jobId);
+    res.json(events);
   } catch (err) {
     next(err);
   }
