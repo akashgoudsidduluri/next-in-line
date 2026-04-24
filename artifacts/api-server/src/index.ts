@@ -3,7 +3,7 @@ import { logger } from "./lib/logger";
 import { startDecayLoop } from "./scheduler/decayLoop";
 import { config } from "./lib/config";
 
-const port = config.PORT;
+const port = config.port;
 
 startDecayLoop();
 

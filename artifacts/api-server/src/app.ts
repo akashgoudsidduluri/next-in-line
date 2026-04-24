@@ -12,7 +12,7 @@ const app: Express = express();
 app.use(helmet());
 app.use(
   cors({
-    origin: config.ALLOWED_ORIGINS === "*" ? "*" : config.ALLOWED_ORIGINS.split(","),
+    origin: config.allowedOrigins.length === 1 && config.allowedOrigins[0] === "*" ? "*" : config.allowedOrigins,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
   }),
