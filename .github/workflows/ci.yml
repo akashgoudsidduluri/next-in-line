@@ -8,6 +8,22 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hiring_pipeline
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v3
@@ -28,3 +44,4 @@ jobs:
         run: pnpm --filter @workspace/api-server run test
         env:
           DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/hiring_pipeline"
+          SESSION_SECRET: "ci-test-secret-long-enough"

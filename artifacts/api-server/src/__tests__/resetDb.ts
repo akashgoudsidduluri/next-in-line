@@ -8,6 +8,16 @@ import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 
 export async function resetDb(): Promise<void> {
+  try {
+    // Connectivity check to provide a clear error if the DB is missing
+    await db.execute(sql`SELECT 1`);
+  } catch (err: any) {
+    console.error("❌ Database Connection Failure in Tests");
+    console.error(`Attempted to connect to database at: ${process.env.DATABASE_URL || "localhost:5432"}`);
+    console.error("Reason:", err.message);
+    throw new Error("Integration tests require a running PostgreSQL instance. Please check your DATABASE_URL.");
+  }
+
   await db.execute(sql`DELETE FROM event_logs`);
   await db.execute(sql`DELETE FROM applications`);
   await db.execute(sql`DELETE FROM applicants`);
