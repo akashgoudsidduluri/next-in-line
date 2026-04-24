@@ -8,6 +8,7 @@ import {
   getApplicationStatus,
 } from "./queueEngine";
 import { createJob } from "./jobService";
+import { registerCompany } from "../auth/service";
 import { findOrCreateApplicant } from "./applicantService";
 import { resetDb, uniqEmail } from "../__tests__/resetDb";
 import { NotFoundError, ConflictError } from "../lib/errors";
@@ -161,7 +162,8 @@ describe("QueueEngine Core", () => {
 
   describe("Rigorous Invariant Stress Test (Elite)", () => {
     it("preserves all invariants over a randomized sequence of 50 operations", async () => {
-      const { id: jobId } = await createJob({ title: "Stress Job", capacity: 3, decaySeconds: 60, companyId: "c1" });
+      const company = await registerCompany({ name: "Stress Corp", email: uniqEmail("stress"), password: "password123" });
+      const { id: jobId } = await createJob({ title: "Stress Job", capacity: 3, decaySeconds: 60, companyId: company.id });
       const apps: string[] = [];
 
       async function verifyInvariants() {
