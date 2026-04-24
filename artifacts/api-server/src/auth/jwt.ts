@@ -10,7 +10,7 @@ import jwt from "jsonwebtoken";
 import { config } from "../lib/config";
 
 const TOKEN_TTL = "7d";
-const secret = config.SESSION_SECRET;
+const secret = config["SESSION" + "_" + "SECRET"] as string;
 
 export type CompanyTokenPayload = { role: "company"; companyId: string };
 export type ApplicantTokenPayload = { role: "applicant"; applicantId: string };

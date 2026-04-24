@@ -79,8 +79,8 @@ router.get("/jobs/:jobId", requireCompany, async (req, res, next) => {
     res.json({
       job: {
         ...toJobDto(dash.job),
-        activeCount: dash.activeCount,
-        waitlistCount: dash.waitlistCount,
+        activeCount: dash.active.length,
+        waitlistCount: dash.waitlist.length,
       },
       active: dash.active.map((a) =>
         toDashboardApplicationDto(a.app, a.applicant),

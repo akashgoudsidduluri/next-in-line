@@ -427,44 +427,41 @@ export async function getApplicationStatus(applicationId: string) {
 }
 
 export async function getJobDashboard(jobId: string) {
-  const job = await db
+  const jobRow = await db
     .select()
     .from(jobsTable)
     .where(eq(jobsTable.id, jobId))
     .limit(1);
-  if (!job[0]) return null;
+  if (!jobRow[0]) return null;
 
-  const apps = await db
-    .select({
-      app: applicationsTable,
-      applicant: applicantsTable,
-    })
-    .from(applicationsTable)
-    .innerJoin(
-      applicantsTable,
-      eq(applicantsTable.id, applicationsTable.applicantId),
-    )
-    .where(eq(applicationsTable.jobId, jobId))
-    .orderBy(asc(applicationsTable.queuePosition));
+  // Optimize: Fetch active and waitlisted applicants in parallel with correct ordering
+  const [active, waitlist, recentEvents] = await Promise.all([
+    db
+      .select({ app: applicationsTable, applicant: applicantsTable })
+      .from(applicationsTable)
+      .innerJoin(applicantsTable, eq(applicantsTable.id, applicationsTable.applicantId))
+      .where(and(eq(applicationsTable.jobId, jobId), eq(applicationsTable.state, "ACTIVE"))),
+    
+    db
+      .select({ app: applicationsTable, applicant: applicantsTable })
+      .from(applicationsTable)
+      .innerJoin(applicantsTable, eq(applicantsTable.id, applicationsTable.applicantId))
+      .where(and(eq(applicationsTable.jobId, jobId), eq(applicationsTable.state, "WAITLISTED")))
+      .orderBy(asc(applicationsTable.queuePosition)),
 
-  const active = apps.filter((a) => a.app.state === "ACTIVE");
-  const waitlist = apps
-    .filter((a) => a.app.state === "WAITLISTED")
-    .sort((a, b) => (a.app.queuePosition ?? 0) - (b.app.queuePosition ?? 0));
-
-  const recentEvents = await db
-    .select()
-    .from(eventLogsTable)
-    .where(eq(eventLogsTable.jobId, jobId))
-    .orderBy(sql`created_at DESC`)
-    .limit(50);
+    db
+      .select()
+      .from(eventLogsTable)
+      .where(eq(eventLogsTable.jobId, jobId))
+      .orderBy(sql`created_at DESC`)
+      .limit(20)
+  ]);
 
   return {
-    job: job[0],
-    activeCount: active.length,
-    waitlistCount: waitlist.length,
+    job: jobRow[0],
     active,
     waitlist,
     recentEvents,
   };
 }
+
