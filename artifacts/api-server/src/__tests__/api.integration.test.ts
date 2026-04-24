@@ -103,15 +103,19 @@ describe("API Integration Tests (Highest Quality)", () => {
 
   describe("Edge Case Error Handling", () => {
     it("returns 400 for malformed IDs (Zod validation)", async () => {
-      const res = await request(app).get("/api/jobs/not-a-uuid");
+      const company = await registerCompany({ name: "C", email: uniqEmail("c"), password: "password123" });
+      const token = signCompanyToken(company.id);
+      const res = await request(app)
+        .get("/api/jobs/not-a-uuid")
+        .set("Authorization", `Bearer ${token}`);
       expect(res.status).toBe(400);
       expect(res.body.code).toBe("VALIDATION_ERROR");
     });
 
     it("returns 409 for invalid state transitions (e.g. double exit)", async () => {
-      const company = await registerCompany({ name: "C", email: uniqEmail("c"), password: "p" });
+      const company = await registerCompany({ name: "C", email: uniqEmail("c"), password: "password123" });
       const job = await request(app).post("/api/jobs").set("Authorization", `Bearer ${signCompanyToken(company.id)}`).send({ title: "T", capacity: 1 });
-      const appRes = await request(app).post("/api/applicant/auth/register").send({ name: "A", email: uniqEmail("a"), password: "p" });
+      const appRes = await request(app).post("/api/applicant/auth/register").send({ name: "A", email: uniqEmail("a"), password: "password123" });
       const apply = await request(app).post(`/api/jobs/${job.body.id}/apply`).set("Authorization", `Bearer ${appRes.body.token}`);
       
       const token = appRes.body.token;
@@ -127,12 +131,12 @@ describe("API Integration Tests (Highest Quality)", () => {
 
   describe("Observability & Analytics", () => {
     it("GET /api/jobs/:jobId returns full dashboard for company", async () => {
-      const company = await registerCompany({ name: "Obs Corp", email: uniqEmail("obs"), password: "p" });
+      const company = await registerCompany({ name: "Obs Corp", email: uniqEmail("obs"), password: "password123" });
       const token = signCompanyToken(company.id);
       const job = await request(app).post("/api/jobs").set("Authorization", `Bearer ${token}`).send({ title: "Dev", capacity: 1 });
       const jobId = job.body.id;
 
-      const applicant = await request(app).post("/api/applicant/auth/register").send({ name: "A", email: uniqEmail("a"), password: "p" });
+      const applicant = await request(app).post("/api/applicant/auth/register").send({ name: "A", email: uniqEmail("a"), password: "password123" });
       await request(app).post(`/api/jobs/${jobId}/apply`).set("Authorization", `Bearer ${applicant.body.token}`);
 
       const dash = await request(app)
@@ -145,7 +149,7 @@ describe("API Integration Tests (Highest Quality)", () => {
     });
 
     it("GET /api/jobs/:jobId/replay reconstructs historical state", async () => {
-      const company = await registerCompany({ name: "Replay Corp", email: uniqEmail("rep"), password: "p" });
+      const company = await registerCompany({ name: "Replay Corp", email: uniqEmail("rep"), password: "password123" });
       const token = signCompanyToken(company.id);
       const job = await request(app).post("/api/jobs").set("Authorization", `Bearer ${token}`).send({ title: "History", capacity: 1 });
       const jobId = job.body.id;

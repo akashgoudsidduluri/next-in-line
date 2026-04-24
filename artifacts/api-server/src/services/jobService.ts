@@ -1,6 +1,6 @@
 import { sql, eq } from "drizzle-orm";
 import { db, jobsTable, eventLogsTable } from "@workspace/db";
-import { toJobDto, toEventLogDto } from "./dto";
+import { toJobDto, toEventLogDto, type JobDto } from "./dto";
 
 export interface JobWithCounts {
   id: string;
@@ -64,13 +64,13 @@ export async function createJob(input: CreateJobInput) {
   return toJobDto(job);
 }
 
-export async function getJobById(jobId: string) {
+export async function getJobById(jobId: string): Promise<JobDto | null> {
   const job = await db
     .select()
     .from(jobsTable)
     .where(eq(jobsTable.id, jobId))
     .limit(1);
-  return job[0] ?? null;
+  return job[0] ? toJobDto(job[0]) : null;
 }
 
 export async function getJobEvents(jobId: string) {

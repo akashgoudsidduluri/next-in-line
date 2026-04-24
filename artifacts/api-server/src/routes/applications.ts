@@ -9,7 +9,6 @@ import {
   applyAsRegisteredApplicant,
   applicationBelongsToApplicant,
 } from "../services/queueEngineExt";
-import { toApplicationStatusDto } from "../services/dto";
 import { requireApplicant, getApplicantAuth } from "../auth/middleware";
 import { ForbiddenError, NotFoundError } from "../lib/errors";
 
@@ -25,7 +24,7 @@ router.post("/jobs/:jobId/apply", requireApplicant, async (req, res, next) => {
     });
     const status = await getApplicationStatus(app.id);
     if (!status) throw new Error("Failed to read back created application");
-    res.status(201).json(toApplicationStatusDto(status.app, status.applicant));
+    res.status(201).json(status);
   } catch (err) {
     next(err);
   }
@@ -42,7 +41,7 @@ router.get(
       if (!owns) throw new ForbiddenError("Not your application");
       const status = await getApplicationStatus(id);
       if (!status) throw new NotFoundError("Application not found");
-      res.json(toApplicationStatusDto(status.app, status.applicant));
+      res.json(status);
     } catch (err) {
       next(err);
     }
@@ -61,7 +60,7 @@ router.post(
       await acknowledgeApplication(id);
       const status = await getApplicationStatus(id);
       if (!status) throw new NotFoundError("Application not found after ack");
-      res.json(toApplicationStatusDto(status.app, status.applicant));
+      res.json(status);
     } catch (err) {
       next(err);
     }
@@ -80,7 +79,7 @@ router.post(
       await exitApplication(id);
       const status = await getApplicationStatus(id);
       if (!status) throw new NotFoundError("Application not found after exit");
-      res.json(toApplicationStatusDto(status.app, status.applicant));
+      res.json(status);
     } catch (err) {
       next(err);
     }

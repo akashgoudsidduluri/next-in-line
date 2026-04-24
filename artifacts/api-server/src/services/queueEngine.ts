@@ -30,7 +30,7 @@ import {
   type EventLog,
 } from "@workspace/db";
 import { NotFoundError, ConflictError, DatabaseInsertError, DatabaseUpdateError } from "../lib/errors";
-import { toDashboardDto, type DashboardDto } from "./dto";
+import { toDashboardDto, type DashboardDto, toApplicationDto, type ApplicationDto, toApplicationStatusDto, type ApplicationStatusDto } from "./dto";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -181,7 +181,7 @@ export interface ApplyInput {
  * is below capacity the new application becomes ACTIVE with an ack deadline;
  * otherwise it is appended to the waitlist at position max(pos)+1.
  */
-export async function applyToJob(input: ApplyInput): Promise<Application> {
+export async function applyToJob(input: ApplyInput): Promise<ApplicationDto> {
   return db.transaction(async (tx) => {
     const job = await lockJob(tx, input.jobId);
 
@@ -207,7 +207,7 @@ export async function applyToJob(input: ApplyInput): Promise<Application> {
         reason: "INITIAL_ADMISSION",
         ackDeadline: ackDeadline.toISOString(),
       });
-      return app;
+      return toApplicationDto(app);
     }
 
     const nextPos = (await maxQueuePosition(tx, input.jobId)) + 1;
@@ -225,7 +225,7 @@ export async function applyToJob(input: ApplyInput): Promise<Application> {
       admittedAs: "WAITLISTED",
       queuePosition: nextPos,
     });
-    return app;
+    return toApplicationDto(app);
   });
 }
 
@@ -269,7 +269,7 @@ export async function updateJob(
  */
 export async function acknowledgeApplication(
   applicationId: string,
-): Promise<Application> {
+): Promise<ApplicationDto> {
   return db.transaction(async (tx) => {
     const existing = await tx
       .select()
@@ -283,7 +283,7 @@ export async function acknowledgeApplication(
       throw new ConflictError(
         `Cannot acknowledge application in state ${app.state} (must be ACTIVE)`,
       );
-    if (app.acknowledgedAt) return app;
+    if (app.acknowledgedAt) return toApplicationDto(app);
 
     const now = new Date();
     const [updated] = await tx
@@ -293,7 +293,7 @@ export async function acknowledgeApplication(
       .returning();
     if (!updated) throw new DatabaseUpdateError("Application", "Failed to acknowledge application");
     await logEvent(tx, updated.id, updated.jobId, "ACKNOWLEDGED", {});
-    return updated;
+    return toApplicationDto(updated);
   });
 }
 
@@ -303,7 +303,7 @@ export async function acknowledgeApplication(
  */
 export async function exitApplication(
   applicationId: string,
-): Promise<{ application: Application; promoted: number }> {
+): Promise<{ application: ApplicationDto; promoted: number }> {
   return db.transaction(async (tx) => {
     const existing = await tx
       .select()
@@ -313,7 +313,7 @@ export async function exitApplication(
     const app = existing[0];
     if (!app) throw new NotFoundError(`Application not found: ${applicationId}`);
     const job = await lockJob(tx, app.jobId);
-    if (app.state === "EXITED") return { application: app, promoted: 0 };
+    if (app.state === "EXITED") return { application: toApplicationDto(app), promoted: 0 };
 
     const wasWaitlisted = app.state === "WAITLISTED";
     const exitedPos = app.queuePosition ?? null;
@@ -348,7 +348,7 @@ export async function exitApplication(
       job.capacity,
       "EXIT_RECOVERY",
     );
-    return { application: updated, promoted };
+    return { application: toApplicationDto(updated), promoted };
   });
 }
 
@@ -436,7 +436,7 @@ export async function findExpiredActiveApplicationIds(): Promise<string[]> {
 
 /* ─────────────────────────  READ HELPERS  ───────────────────────── */
 
-export async function getApplicationStatus(applicationId: string) {
+export async function getApplicationStatus(applicationId: string): Promise<ApplicationStatusDto | null> {
   const rows = await db
     .select({
       app: applicationsTable,
@@ -449,7 +449,8 @@ export async function getApplicationStatus(applicationId: string) {
     )
     .where(eq(applicationsTable.id, applicationId))
     .limit(1);
-  return rows[0] ?? null;
+  const row = rows[0];
+  return row ? toApplicationStatusDto(row.app, row.applicant) : null;
 }
 
 export async function getJobDashboard(jobId: string): Promise<DashboardDto | null> {

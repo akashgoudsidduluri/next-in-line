@@ -23,10 +23,22 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
 
   const httpErr: HttpError = err instanceof HttpError ? err : toHttpError(err);
 
+  const logContext = {
+    method: req.method,
+    url: req.url,
+    query: req.query,
+    err: {
+      message: httpErr.message,
+      code: httpErr.code,
+      status: httpErr.status,
+      stack: httpErr.status >= 500 ? err.stack : undefined,
+    },
+  };
+
   if (httpErr.status >= 500) {
-    req.log?.error({ err }, "Request failed");
+    req.log?.error(logContext, "Request failed");
   } else {
-    req.log?.warn({ err: { message: httpErr.message, code: httpErr.code } }, "Request rejected");
+    req.log?.warn(logContext, "Request rejected");
   }
 
   res.status(httpErr.status).json({

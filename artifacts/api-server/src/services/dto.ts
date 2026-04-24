@@ -43,6 +43,34 @@ export function toApplicationStatusDto(
   };
 }
 
+export interface ApplicationDto {
+  id: string;
+  jobId: string;
+  applicantId: string;
+  state: "WAITLISTED" | "ACTIVE" | "EXITED";
+  queuePosition: number | null;
+  ackDeadline: string | null;
+  acknowledgedAt: string | null;
+  decayCount: number;
+  createdAt: string;
+}
+
+export function toApplicationDto(app: Application): ApplicationDto {
+  return {
+    id: app.id,
+    jobId: app.jobId,
+    applicantId: app.applicantId,
+    state: app.state,
+    queuePosition: app.queuePosition,
+    ackDeadline: app.ackDeadline ? app.ackDeadline.toISOString() : null,
+    acknowledgedAt: app.acknowledgedAt
+      ? app.acknowledgedAt.toISOString()
+      : null,
+    decayCount: app.decayCount,
+    createdAt: app.createdAt.toISOString(),
+  };
+}
+
 export interface DashboardApplicationDto {
   id: string;
   applicantName: string;
