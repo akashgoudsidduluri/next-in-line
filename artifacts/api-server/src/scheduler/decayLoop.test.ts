@@ -6,6 +6,7 @@ import {
   decayActiveApplication,
   findExpiredActiveApplicationIds,
 } from "../services/queueEngine";
+import { findOrCreateApplicant } from "../services/applicantService";
 import { resetDb, uniqEmail } from "../__tests__/resetDb";
 
 async function makeJob(capacity = 1, decaySeconds = 600) {
@@ -29,8 +30,11 @@ describe("decayLoop", () => {
 
   it("decays an unacknowledged ACTIVE applicant whose deadline has passed", async () => {
     const job = await makeJob(1);
-    const a = await applyToJob({ jobId: job.id, name: "A", email: uniqEmail() });
-    const b = await applyToJob({ jobId: job.id, name: "B", email: uniqEmail() });
+    const a1 = await findOrCreateApplicant({ name: "A", email: uniqEmail() });
+    const a2 = await findOrCreateApplicant({ name: "B", email: uniqEmail() });
+    
+    const a = await applyToJob({ jobId: job.id, applicantId: a1.id });
+    const b = await applyToJob({ jobId: job.id, applicantId: a2.id });
     
     expect(a.state).toBe("ACTIVE");
     expect(b.state).toBe("WAITLISTED");
@@ -60,9 +64,15 @@ describe("decayLoop", () => {
 
   it("handles multiple decay cycles correctly (accumulation of penalty)", async () => {
     const job = await makeJob(1);
-    const a = await applyToJob({ jobId: job.id, name: "A", email: uniqEmail() });
-    const b = await applyToJob({ jobId: job.id, name: "B", email: uniqEmail() });
-    const c = await applyToJob({ jobId: job.id, name: "C", email: uniqEmail() });
+    const [idA, idB, idC] = await Promise.all([
+      findOrCreateApplicant({ name: "A", email: uniqEmail() }),
+      findOrCreateApplicant({ name: "B", email: uniqEmail() }),
+      findOrCreateApplicant({ name: "C", email: uniqEmail() }),
+    ]);
+
+    const a = await applyToJob({ jobId: job.id, applicantId: idA.id });
+    const b = await applyToJob({ jobId: job.id, applicantId: idB.id });
+    const c = await applyToJob({ jobId: job.id, applicantId: idC.id });
 
     // 1st Decay: A (ACTIVE) -> B (Promoted)
     await expireDeadline(a.id);
@@ -95,7 +105,8 @@ describe("decayLoop", () => {
 
   it("idempotent — re-decaying returns false and preserves state", async () => {
     const job = await makeJob(1);
-    const a = await applyToJob({ jobId: job.id, name: "A", email: uniqEmail() });
+    const ident = await findOrCreateApplicant({ name: "A", email: uniqEmail() });
+    const a = await applyToJob({ jobId: job.id, applicantId: ident.id });
     await expireDeadline(a.id);
     
     expect(await decayActiveApplication(a.id)).toBe(true);
@@ -109,7 +120,8 @@ describe("decayLoop", () => {
 
   it("prevents decay if applicant acknowledged in the race window", async () => {
     const job = await makeJob(1);
-    const a = await applyToJob({ jobId: job.id, name: "A", email: uniqEmail() });
+    const ident = await findOrCreateApplicant({ name: "A", email: uniqEmail() });
+    const a = await applyToJob({ jobId: job.id, applicantId: ident.id });
     await expireDeadline(a.id);
     
     // Simulate concurrent ACK

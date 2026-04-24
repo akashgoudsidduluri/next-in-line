@@ -161,8 +161,7 @@ async function cascadePromote(
 
 export interface ApplyInput {
   jobId: string;
-  name: string;
-  email: string;
+  applicantId: string;
 }
 
 /**
@@ -176,26 +175,6 @@ export async function applyToJob(input: ApplyInput): Promise<Application> {
   return db.transaction(async (tx) => {
     const job = await lockJob(tx, input.jobId);
 
-    // Find or create the applicant. Even though the engine was originally designed 
-    // for historical apply-time identity, the current schema enforces unique emails
-    // for auth. We reuse the existing row if found to avoid 500 errors.
-    let applicantRows = await tx
-      .select()
-      .from(applicantsTable)
-      .where(eq(applicantsTable.email, input.email))
-      .limit(1);
-
-    let applicant = applicantRows[0];
-    if (!applicant) {
-      const [newApplicant] = await tx
-        .insert(applicantsTable)
-        .values({ name: input.name, email: input.email })
-        .returning();
-      applicant = newApplicant;
-    }
-
-    if (!applicant) throw new HttpError(500, "DATABASE_ERROR", "Failed to resolve applicant");
-
     const active = await countActive(tx, input.jobId);
 
     if (active < job.capacity) {
@@ -204,7 +183,7 @@ export async function applyToJob(input: ApplyInput): Promise<Application> {
         .insert(applicationsTable)
         .values({
           jobId: input.jobId,
-          applicantId: applicant.id,
+          applicantId: input.applicantId,
           state: "ACTIVE",
           queuePosition: null,
           ackDeadline,
@@ -226,7 +205,7 @@ export async function applyToJob(input: ApplyInput): Promise<Application> {
       .insert(applicationsTable)
       .values({
         jobId: input.jobId,
-        applicantId: applicant.id,
+        applicantId: input.applicantId,
         state: "WAITLISTED",
         queuePosition: nextPos,
       })

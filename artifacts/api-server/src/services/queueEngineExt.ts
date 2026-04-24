@@ -69,8 +69,7 @@ export async function applyAsRegisteredApplicant(input: {
 
   return applyToJob({
     jobId: input.jobId,
-    name: applicant.name,
-    email: applicant.email,
+    applicantId: input.applicantId,
   });
 }
 
