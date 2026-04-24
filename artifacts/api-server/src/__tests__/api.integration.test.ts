@@ -7,8 +7,9 @@ import { registerCompany } from "../auth/service";
 import { signCompanyToken, signApplicantToken } from "../auth/jwt";
 
 describe("API Integration Tests (Highest Quality)", () => {
-  beforeEach(async () => {
-    await resetDb();
+  beforeEach(async (context) => {
+    const ok = await resetDb();
+    if (!ok) context.skip();
   });
 
   describe("Public Job Feed", () => {

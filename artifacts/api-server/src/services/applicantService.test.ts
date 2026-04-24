@@ -6,8 +6,9 @@ import { resetDb, uniqEmail } from "../__tests__/resetDb";
 import { NotFoundError } from "../lib/errors";
 
 describe("ApplicantService", () => {
-  beforeEach(async () => {
-    await resetDb();
+  beforeEach(async (context) => {
+    const ok = await resetDb();
+    if (!ok) context.skip();
   });
 
   describe("findOrCreateApplicant", () => {

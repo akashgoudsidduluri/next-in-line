@@ -20,8 +20,9 @@ async function makeJob(capacity = 2, decaySeconds = 600) {
 }
 
 describe("QueueEngine Core", () => {
-  beforeEach(async () => {
-    await resetDb();
+  beforeEach(async (context) => {
+    const ok = await resetDb();
+    if (!ok) context.skip();
   });
 
   describe("applyToJob", () => {

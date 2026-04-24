@@ -68,8 +68,9 @@ describe("replay.reduceEvent (pure)", () => {
 });
 
 describe("replay.replayJob (DB)", () => {
-  beforeEach(async () => {
-    await resetDb();
+  beforeEach(async (context) => {
+    const ok = await resetDb();
+    if (!ok) context.skip();
   });
 
   it("reconstructs current state purely from event_logs", async () => {

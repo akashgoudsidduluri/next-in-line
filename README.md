@@ -213,6 +213,20 @@ pnpm --filter @workspace/api-server run test
 | `auth/auth.test.ts` | JWT round-trip; `requireCompany` rejects an applicant token with 403 and vice versa; missing token → 401. |
 | `middlewares/errorHandler.test.ts` | Each typed error maps to its status; Zod errors → 400; PostgreSQL `23505` (unique violation) → `ConflictError` (409). |
 
+## 🏗️ Architectural Philosophy
+
+This system is built on a clear boundary between **Explicit Domain Logic** and **Delegated Infrastructure**:
+
+### 1. Explicit Custom Logic (The "Brain")
+*   **Deterministic State Machine**: We implemented the queue transitions (`APPLIED`, `PROMOTED`, `DECAYED`, `EXITED`) explicitly in the `queueEngine` rather than using a generic library. This ensures that every state change is perfectly mapped to our business invariants and recorded in an append-only event log for perfect observability.
+*   **Pessimistic Concurrency**: Instead of relying on application-level locks, we use database-level `FOR UPDATE` locking. This serializes mutations at the source of truth, guaranteeing that capacity limits are never violated even under extreme parallel load.
+
+### 2. Delegated Infrastructure (The "Tools")
+*   **Type-Safe Orchestration**: We delegate SQL generation and type mapping to **Drizzle ORM**. This allows us to focus on the *logic* of the queries while Drizzle ensures they are syntactically sound and type-safe.
+*   **Contract Validation**: We use **Zod** to enforce strict boundaries at the edge of the system (API requests and environment variables). By delegating validation to Zod, we ensure that the "Brain" of the system only ever processes sanitized, high-integrity data.
+
+This separation ensures that the complex, high-value parts of the system are custom-tailored for the hiring domain, while the generic, repetitive parts are handled by industry-standard tools.
+
 **Note on "mocked DB" vs real DB.** The brief asked for queue / decay / concurrency tests with a mocked DB layer. Drizzle's chained query builder is impractical to mock without introducing a thick repository abstraction whose value is questionable, and a mocked-DB concurrency test cannot validate that `SELECT … FOR UPDATE` actually serialises — it would only validate that the application would do the right thing **if** the lock worked. We therefore exercise the queue engine end-to-end against the configured `DATABASE_URL` (with row-level `DELETE` between cases so the tests can run alongside the live API server without an `AccessExclusiveLock` deadlock). True lock acquisition is proven by the `concurrency.test.ts` suite under `Promise.all`. In CI a dedicated test database would be configured via `DATABASE_URL` to isolate it from a developer's working data; this is listed in §10 as a future improvement.
 
 ---

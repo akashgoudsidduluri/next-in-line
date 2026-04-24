@@ -1,6 +1,4 @@
 import { Router, type IRouter } from "express";
-import { sql, eq } from "drizzle-orm";
-import { eventLogsTable } from "@workspace/db";
 import { CreateJobBody } from "@workspace/api-zod";
 import { toEventLogDto, toDashboardApplicationDto, toJobDto } from "../services/dto";
 import { getJobDashboard } from "../services/queueEngine";

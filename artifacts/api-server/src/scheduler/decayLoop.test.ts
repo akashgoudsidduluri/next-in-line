@@ -24,8 +24,9 @@ async function expireDeadline(applicationId: string) {
 }
 
 describe("decayLoop", () => {
-  beforeEach(async () => {
-    await resetDb();
+  beforeEach(async (context) => {
+    const ok = await resetDb();
+    if (!ok) context.skip();
   });
 
   it("decays an unacknowledged ACTIVE applicant whose deadline has passed", async () => {

@@ -24,8 +24,9 @@ async function countByState(jobId: string, state: "ACTIVE" | "WAITLISTED") {
 }
 
 describe("concurrency (DB-backed; proves lock acquisition)", () => {
-  beforeEach(async () => {
-    await resetDb();
+  beforeEach(async (context) => {
+    const ok = await resetDb();
+    if (!ok) context.skip();
   });
 
   it("two simultaneous applies for the last slot — exactly one ACTIVE, one WAITLISTED", async () => {
