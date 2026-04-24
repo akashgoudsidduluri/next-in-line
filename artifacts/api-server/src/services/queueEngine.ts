@@ -26,7 +26,7 @@ import {
   type Application,
   type EventType,
 } from "@workspace/db";
-import { NotFoundError, ConflictError, HttpError } from "../lib/errors";
+import { NotFoundError, ConflictError, HttpError, DatabaseInsertError, DatabaseUpdateError, DatabaseQueryError } from "../lib/errors";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -37,19 +37,22 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
  * Throws if the job does not exist.
  */
 async function lockJob(tx: Tx, jobId: string) {
-  const rows = await tx.execute<{
-    id: string;
-    capacity: number;
-    decay_seconds: number;
-  }>(
-    sql`SELECT id, capacity, decay_seconds FROM jobs WHERE id = ${jobId} FOR UPDATE`,
-  );
-  const row = rows.rows[0];
+  const rows = await tx
+    .select({
+      id: jobsTable.id,
+      capacity: jobsTable.capacity,
+      decaySeconds: jobsTable.decaySeconds,
+    })
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId))
+    .for("update");
+
+  const row = rows[0];
   if (!row) throw new NotFoundError(`Job not found: ${jobId}`);
   return {
     id: row.id,
-    capacity: Number(row.capacity),
-    decaySeconds: Number(row.decay_seconds),
+    capacity: row.capacity,
+    decaySeconds: row.decaySeconds,
   };
 }
 
@@ -192,7 +195,7 @@ export async function applyToJob(input: ApplyInput): Promise<Application> {
           ackDeadline,
         })
         .returning();
-      if (!app) throw new HttpError(500, "DATABASE_ERROR", "Failed to create application");
+      if (!app) throw new DatabaseInsertError("Application");
       await logEvent(tx, app.id, input.jobId, "APPLIED", {
         admittedAs: "ACTIVE",
       });
@@ -213,12 +216,46 @@ export async function applyToJob(input: ApplyInput): Promise<Application> {
         queuePosition: nextPos,
       })
       .returning();
-    if (!app) throw new HttpError(500, "DATABASE_ERROR", "Failed to create application");
+    if (!app) throw new DatabaseInsertError("Application");
     await logEvent(tx, app.id, input.jobId, "APPLIED", {
       admittedAs: "WAITLISTED",
       queuePosition: nextPos,
     });
     return app;
+  });
+}
+
+/**
+ * Update job settings. If capacity increases, tries to promote waitlisted applicants.
+ * Returns the number of applicants promoted.
+ */
+export async function updateJob(
+  jobId: string,
+  input: { capacity?: number; decaySeconds?: number },
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    const job = await lockJob(tx, jobId);
+
+    await tx
+      .update(jobsTable)
+      .set({
+        capacity: input.capacity ?? job.capacity,
+        decaySeconds: input.decaySeconds ?? job.decaySeconds,
+      })
+      .where(eq(jobsTable.id, jobId));
+
+    // If capacity increased, try to fill new slots from the waitlist
+    let promoted = 0;
+    if (input.capacity && input.capacity > job.capacity) {
+      promoted = await cascadePromote(
+        tx,
+        jobId,
+        input.decaySeconds ?? job.decaySeconds,
+        input.capacity,
+        "CAPACITY_EXPANSION",
+      );
+    }
+    return promoted;
   });
 }
 
@@ -250,7 +287,7 @@ export async function acknowledgeApplication(
       .set({ acknowledgedAt: now, ackDeadline: null, updatedAt: now })
       .where(eq(applicationsTable.id, applicationId))
       .returning();
-    if (!updated) throw new HttpError(500, "DATABASE_ERROR", "Failed to acknowledge application");
+    if (!updated) throw new DatabaseUpdateError("Application", "Failed to acknowledge application");
     await logEvent(tx, updated.id, updated.jobId, "ACKNOWLEDGED", {});
     return updated;
   });
@@ -287,7 +324,7 @@ export async function exitApplication(
       })
       .where(eq(applicationsTable.id, applicationId))
       .returning();
-    if (!updated) throw new HttpError(500, "DATABASE_ERROR", "Failed to exit application");
+    if (!updated) throw new DatabaseUpdateError("Application", "Failed to exit application");
 
     // If a waitlisted applicant exited, compact the queue behind them.
     if (wasWaitlisted && exitedPos != null) {

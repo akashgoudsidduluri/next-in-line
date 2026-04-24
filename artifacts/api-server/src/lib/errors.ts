@@ -59,6 +59,24 @@ export class InvalidTransitionError extends HttpError {
   }
 }
 
+export class DatabaseInsertError extends HttpError {
+  constructor(entity: string, message = "Failed to insert record", cause?: unknown) {
+    super(500, "DATABASE_INSERT_ERROR", `${message} (${entity})`, cause);
+  }
+}
+
+export class DatabaseUpdateError extends HttpError {
+  constructor(entity: string, message = "Failed to update record", cause?: unknown) {
+    super(500, "DATABASE_UPDATE_ERROR", `${message} (${entity})`, cause);
+  }
+}
+
+export class DatabaseQueryError extends HttpError {
+  constructor(entity: string, message = "Failed to execute query", cause?: unknown) {
+    super(500, "DATABASE_QUERY_ERROR", `${message} (${entity})`, cause);
+  }
+}
+
 /**
  * Map an unknown thrown value to an HttpError. Recognises the typed errors
  * above and the PostgreSQL unique-violation code (23505) which Drizzle/pg

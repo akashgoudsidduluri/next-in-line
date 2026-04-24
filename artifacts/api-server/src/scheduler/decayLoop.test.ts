@@ -138,4 +138,65 @@ describe("decayLoop", () => {
     expect(final.state).toBe("ACTIVE");
     expect(final.acknowledgedAt?.toISOString()).toBe(now.toISOString());
   });
+
+  it("handles multiple simultaneous decays by promoting sequentially", async () => {
+    const job = await makeJob(2);
+    const [a1, a2, a3, a4] = await Promise.all([
+      findOrCreateApplicant({ name: "1", email: uniqEmail() }),
+      findOrCreateApplicant({ name: "2", email: uniqEmail() }),
+      findOrCreateApplicant({ name: "3", email: uniqEmail() }),
+      findOrCreateApplicant({ name: "4", email: uniqEmail() }),
+    ]);
+
+    const apps = await Promise.all([
+      applyToJob({ jobId: job.id, applicantId: a1.id }),
+      applyToJob({ jobId: job.id, applicantId: a2.id }),
+      applyToJob({ jobId: job.id, applicantId: a3.id }),
+      applyToJob({ jobId: job.id, applicantId: a4.id }),
+    ]);
+
+    // apps[0], apps[1] are ACTIVE. apps[2], apps[3] are WAITLISTED.
+    await expireDeadline(apps[0].id);
+    await expireDeadline(apps[1].id);
+
+    // Decay both
+    await Promise.all([
+      decayActiveApplication(apps[0].id),
+      decayActiveApplication(apps[1].id),
+    ]);
+
+    const finalState = await db.select().from(applicationsTable).where(eq(applicationsTable.jobId, job.id));
+    
+    // Both 3 and 4 should be ACTIVE now
+    expect(finalState.find(x => x.id === apps[2].id)?.state).toBe("ACTIVE");
+    expect(finalState.find(x => x.id === apps[3].id)?.state).toBe("ACTIVE");
+    
+    // 1 and 2 should be at the back of the waitlist
+    const waitlisted = finalState.filter(x => x.state === "WAITLISTED").sort((a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0));
+    expect(waitlisted).toHaveLength(2);
+    expect(waitlisted[0].id).toBe(apps[0].id);
+    expect(waitlisted[1].id).toBe(apps[1].id);
+  });
+
+  it("handles capacity increase by promoting waitlist immediately", async () => {
+    const job = await makeJob(1);
+    const [a1, a2] = await Promise.all([
+      findOrCreateApplicant({ name: "1", email: uniqEmail() }),
+      findOrCreateApplicant({ name: "2", email: uniqEmail() }),
+    ]);
+
+    await applyToJob({ jobId: job.id, applicantId: a1.id });
+    const b = await applyToJob({ jobId: job.id, applicantId: a2.id });
+
+    expect(b.state).toBe("WAITLISTED");
+
+    // Increase capacity from 1 to 2
+    const { updateJob } = await import("../services/queueEngine");
+    await updateJob(job.id, { capacity: 2 });
+
+    const appB = (await db.select().from(applicationsTable).where(eq(applicationsTable.id, b.id)))[0]!;
+    expect(appB.state).toBe("ACTIVE");
+    expect(appB.queuePosition).toBeNull();
+  });
 });
+

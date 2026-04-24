@@ -133,6 +133,38 @@ export function reduceEvent(
   }
 }
 
+/**
+ * Pure comparison utility for ReplayApplication sorting.
+ * Priorities:
+ * 1. ACTIVE
+ * 2. PENDING_ACKNOWLEDGMENT
+ * 3. WAITLISTED (by queuePosition)
+ * 4. INACTIVE
+ */
+export function compareReplayApplications(a: ReplayApplication, b: ReplayApplication): number {
+  const ord = (s: ReplayState) => {
+    switch (s) {
+      case "ACTIVE": return 0;
+      case "PENDING_ACKNOWLEDGMENT": return 1;
+      case "WAITLISTED": return 2;
+      case "INACTIVE": return 3;
+      default: return 4;
+    }
+  };
+
+  if (ord(a.state) !== ord(b.state)) {
+    return ord(a.state) - ord(b.state);
+  }
+
+  // Same state: use queuePosition for WAITLISTED
+  if (a.state === "WAITLISTED") {
+    return (a.queuePosition ?? 0) - (b.queuePosition ?? 0);
+  }
+
+  return 0;
+}
+
+
 function externaliseState(row: ReplayRow): ReplayState {
   if (row.state === "EXITED") return "INACTIVE";
   if (row.state === "WAITLISTED") return "WAITLISTED";
@@ -191,18 +223,8 @@ export async function replayJob(
     };
   });
 
-  applications.sort((a, b) => {
-    const ord = (s: ReplayState) =>
-      s === "ACTIVE"
-        ? 0
-        : s === "PENDING_ACKNOWLEDGMENT"
-          ? 1
-          : s === "WAITLISTED"
-            ? 2
-            : 3;
-    if (ord(a.state) !== ord(b.state)) return ord(a.state) - ord(b.state);
-    return (a.queuePosition ?? 0) - (b.queuePosition ?? 0);
-  });
+  applications.sort(compareReplayApplications);
+
 
   return { jobId, asOf: asOf.toISOString(), applications };
 }
