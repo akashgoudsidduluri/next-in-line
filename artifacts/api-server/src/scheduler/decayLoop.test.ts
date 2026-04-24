@@ -28,62 +28,102 @@ describe("decayLoop", () => {
   });
 
   it("decays an unacknowledged ACTIVE applicant whose deadline has passed", async () => {
-    // Use 2 applicants so the cascade after decay does NOT immediately
-    // re-promote the same applicant. With B in line, A lands on the waitlist
-    // and B is promoted into A's freed slot.
     const job = await makeJob(1);
     const a = await applyToJob({ jobId: job.id, name: "A", email: uniqEmail() });
     const b = await applyToJob({ jobId: job.id, name: "B", email: uniqEmail() });
+    
     expect(a.state).toBe("ACTIVE");
     expect(b.state).toBe("WAITLISTED");
+    expect(b.queuePosition).toBe(1);
+    
     await expireDeadline(a.id);
 
     const expired = await findExpiredActiveApplicationIds();
     expect(expired).toContain(a.id);
 
-    const decayed = await decayActiveApplication(a.id);
-    expect(decayed).toBe(true);
+    const success = await decayActiveApplication(a.id);
+    expect(success).toBe(true);
 
-    const after = await db
-      .select()
-      .from(applicationsTable)
-      .where(eq(applicationsTable.id, a.id));
-    expect(after[0]!.state).toBe("WAITLISTED");
-    expect(after[0]!.decayCount).toBe(1);
-    expect(after[0]!.queuePosition).not.toBeNull();
-    expect(after[0]!.acknowledgedAt).toBeNull();
+    const appA = (await db.select().from(applicationsTable).where(eq(applicationsTable.id, a.id)))[0]!;
+    const appB = (await db.select().from(applicationsTable).where(eq(applicationsTable.id, b.id)))[0]!;
+
+    expect(appA.state).toBe("WAITLISTED");
+    expect(appA.decayCount).toBe(1);
+    expect(appA.queuePosition).toBe(1); // Since B was promoted, A is now first in line
+    expect(appA.acknowledgedAt).toBeNull();
+    expect(appA.ackDeadline).toBeNull();
+
+    expect(appB.state).toBe("ACTIVE");
+    expect(appB.queuePosition).toBeNull();
+    expect(appB.ackDeadline).not.toBeNull();
   });
 
-  it("cascade-promotes the next waitlist head into the freed slot", async () => {
+  it("handles multiple decay cycles correctly (accumulation of penalty)", async () => {
     const job = await makeJob(1);
     const a = await applyToJob({ jobId: job.id, name: "A", email: uniqEmail() });
     const b = await applyToJob({ jobId: job.id, name: "B", email: uniqEmail() });
-    expect(b.state).toBe("WAITLISTED");
+    const c = await applyToJob({ jobId: job.id, name: "C", email: uniqEmail() });
+
+    // 1st Decay: A (ACTIVE) -> B (Promoted)
     await expireDeadline(a.id);
     await decayActiveApplication(a.id);
-    const bAfter = await db
-      .select()
-      .from(applicationsTable)
-      .where(eq(applicationsTable.id, b.id));
-    expect(bAfter[0]!.state).toBe("ACTIVE");
+    
+    let state = await db.select().from(applicationsTable).orderBy(applicationsTable.createdAt);
+    expect(state.find(x => x.id === a.id)?.decayCount).toBe(1);
+    expect(state.find(x => x.id === b.id)?.state).toBe("ACTIVE");
+
+    // 2nd Decay: B (ACTIVE) -> C (Promoted)
+    await expireDeadline(b.id);
+    await decayActiveApplication(b.id);
+
+    state = await db.select().from(applicationsTable);
+    expect(state.find(x => x.id === b.id)?.decayCount).toBe(1);
+    expect(state.find(x => x.id === c.id)?.state).toBe("ACTIVE");
+    expect(state.find(x => x.id === a.id)?.queuePosition).toBe(1);
+    expect(state.find(x => x.id === b.id)?.queuePosition).toBe(2);
+
+    // 3rd Decay: C (ACTIVE) -> A (Promoted)
+    await expireDeadline(c.id);
+    await decayActiveApplication(c.id);
+
+    state = await db.select().from(applicationsTable);
+    expect(state.find(x => x.id === a.id)?.state).toBe("ACTIVE");
+    expect(state.find(x => x.id === a.id)?.decayCount).toBe(1);
+    expect(state.find(x => x.id === c.id)?.decayCount).toBe(1);
+    expect(state.find(x => x.id === c.id)?.queuePosition).toBe(2);
   });
 
-  it("idempotent — re-decaying after the row is no longer ACTIVE returns false", async () => {
+  it("idempotent — re-decaying returns false and preserves state", async () => {
     const job = await makeJob(1);
     const a = await applyToJob({ jobId: job.id, name: "A", email: uniqEmail() });
     await expireDeadline(a.id);
+    
     expect(await decayActiveApplication(a.id)).toBe(true);
+    const firstState = await db.select().from(applicationsTable).where(eq(applicationsTable.id, a.id));
+    
     expect(await decayActiveApplication(a.id)).toBe(false);
+    const secondState = await db.select().from(applicationsTable).where(eq(applicationsTable.id, a.id));
+    
+    expect(firstState).toEqual(secondState);
   });
 
-  it("no-ops when applicant ack'd just before decay (race window)", async () => {
+  it("prevents decay if applicant acknowledged in the race window", async () => {
     const job = await makeJob(1);
     const a = await applyToJob({ jobId: job.id, name: "A", email: uniqEmail() });
     await expireDeadline(a.id);
+    
+    // Simulate concurrent ACK
+    const now = new Date();
     await db
       .update(applicationsTable)
-      .set({ acknowledgedAt: new Date(), ackDeadline: null })
+      .set({ acknowledgedAt: now, ackDeadline: null })
       .where(eq(applicationsTable.id, a.id));
-    expect(await decayActiveApplication(a.id)).toBe(false);
+      
+    const result = await decayActiveApplication(a.id);
+    expect(result).toBe(false);
+
+    const final = (await db.select().from(applicationsTable).where(eq(applicationsTable.id, a.id)))[0]!;
+    expect(final.state).toBe("ACTIVE");
+    expect(final.acknowledgedAt?.toISOString()).toBe(now.toISOString());
   });
 });

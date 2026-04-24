@@ -8,10 +8,13 @@
 export class HttpError extends Error {
   public readonly status: number;
   public readonly code: string;
-  constructor(status: number, code: string, message: string) {
+  public readonly cause?: unknown;
+
+  constructor(status: number, code: string, message: string, cause?: unknown) {
     super(message);
     this.status = status;
     this.code = code;
+    this.cause = cause;
     this.name = this.constructor.name;
   }
 }
@@ -70,5 +73,5 @@ export function toHttpError(err: unknown): HttpError {
     }
   }
   const message = err instanceof Error ? err.message : "Internal server error";
-  return new HttpError(500, "INTERNAL", message);
+  return new HttpError(500, "INTERNAL", message, err);
 }

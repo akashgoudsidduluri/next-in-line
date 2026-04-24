@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { db, jobsTable, applicationsTable, eventLogsTable } from "@workspace/db";
+import { db, jobsTable, applicationsTable, applicantsTable, eventLogsTable } from "@workspace/db";
 import { eq, and, sql } from "drizzle-orm";
 import {
   applyToJob,
