@@ -5,6 +5,7 @@ import {
   acknowledgeApplication,
   exitApplication,
 } from "./queueEngine";
+import { findOrCreateApplicant } from "./applicantService";
 import { db, jobsTable } from "@workspace/db";
 import { resetDb, uniqEmail } from "../__tests__/resetDb";
 
@@ -76,8 +77,12 @@ describe("replay.replayJob (DB)", () => {
       .insert(jobsTable)
       .values({ title: "T", capacity: 1 })
       .returning();
-    const a = await applyToJob({ jobId: job!.id, name: "A", email: uniqEmail() });
-    const b = await applyToJob({ jobId: job!.id, name: "B", email: uniqEmail() });
+      
+    const identA = await findOrCreateApplicant({ name: "A", email: uniqEmail("a") });
+    const identB = await findOrCreateApplicant({ name: "B", email: uniqEmail("b") });
+    
+    const a = await applyToJob({ jobId: job!.id, applicantId: identA.id });
+    const b = await applyToJob({ jobId: job!.id, applicantId: identB.id });
     await acknowledgeApplication(a.id);
 
     const replayed = await replayJob(job!.id, new Date());
@@ -93,7 +98,10 @@ describe("replay.replayJob (DB)", () => {
       .insert(jobsTable)
       .values({ title: "T", capacity: 1 })
       .returning();
-    const a = await applyToJob({ jobId: job!.id, name: "A", email: uniqEmail() });
+      
+    const identA = await findOrCreateApplicant({ name: "A", email: uniqEmail("a") });
+    const a = await applyToJob({ jobId: job!.id, applicantId: identA.id });
+    
     await new Promise((r) => setTimeout(r, 50));
     const snapshot = new Date();
     await new Promise((r) => setTimeout(r, 50));
