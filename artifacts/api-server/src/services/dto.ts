@@ -111,3 +111,28 @@ export function toEventLogDto(e: EventLog): EventLogDto {
     createdAt: e.createdAt.toISOString(),
   };
 }
+
+export interface DashboardDto {
+  job: JobDto & { activeCount: number; waitlistCount: number };
+  active: DashboardApplicationDto[];
+  waitlist: DashboardApplicationDto[];
+  recentEvents: EventLogDto[];
+}
+
+export function toDashboardDto(
+  job: Job,
+  active: { app: Application; applicant: Applicant }[],
+  waitlist: { app: Application; applicant: Applicant }[],
+  recentEvents: EventLog[],
+): DashboardDto {
+  return {
+    job: {
+      ...toJobDto(job),
+      activeCount: active.length,
+      waitlistCount: waitlist.length,
+    },
+    active: active.map((a) => toDashboardApplicationDto(a.app, a.applicant)),
+    waitlist: waitlist.map((a) => toDashboardApplicationDto(a.app, a.applicant)),
+    recentEvents: recentEvents.map(toEventLogDto),
+  };
+}

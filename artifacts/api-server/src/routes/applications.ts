@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { JobIdParams, ApplicationIdParams } from "@workspace/api-zod";
 import {
   acknowledgeApplication,
   exitApplication,
@@ -16,7 +17,7 @@ const router: IRouter = Router();
 
 router.post("/jobs/:jobId/apply", requireApplicant, async (req, res, next) => {
   try {
-    const jobId = String(req.params["jobId"]);
+    const { jobId } = JobIdParams.parse(req.params);
     const auth = getApplicantAuth(req);
     const app = await applyAsRegisteredApplicant({
       jobId,
@@ -35,9 +36,9 @@ router.get(
   requireApplicant,
   async (req, res, next) => {
     try {
-      const id = String(req.params["applicationId"]);
-      const auth = getApplicantAuth(req);
-      const owns = await applicationBelongsToApplicant(id, auth.applicantId);
+    const { applicationId: id } = ApplicationIdParams.parse(req.params);
+    const auth = getApplicantAuth(req);
+    const owns = await applicationBelongsToApplicant(id, auth.applicantId);
       if (!owns) throw new ForbiddenError("Not your application");
       const status = await getApplicationStatus(id);
       if (!status) throw new NotFoundError("Application not found");
@@ -53,9 +54,9 @@ router.post(
   requireApplicant,
   async (req, res, next) => {
     try {
-      const id = String(req.params["applicationId"]);
-      const auth = getApplicantAuth(req);
-      const owns = await applicationBelongsToApplicant(id, auth.applicantId);
+    const { applicationId: id } = ApplicationIdParams.parse(req.params);
+    const auth = getApplicantAuth(req);
+    const owns = await applicationBelongsToApplicant(id, auth.applicantId);
       if (!owns) throw new ForbiddenError("Not your application");
       await acknowledgeApplication(id);
       const status = await getApplicationStatus(id);
@@ -72,9 +73,9 @@ router.post(
   requireApplicant,
   async (req, res, next) => {
     try {
-      const id = String(req.params["applicationId"]);
-      const auth = getApplicantAuth(req);
-      const owns = await applicationBelongsToApplicant(id, auth.applicantId);
+    const { applicationId: id } = ApplicationIdParams.parse(req.params);
+    const auth = getApplicantAuth(req);
+    const owns = await applicationBelongsToApplicant(id, auth.applicantId);
       if (!owns) throw new ForbiddenError("Not your application");
       await exitApplication(id);
       const status = await getApplicationStatus(id);

@@ -2,9 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import request from "supertest";
 import app from "../app";
 import { resetDb, uniqEmail } from "./resetDb";
-import { db, companiesTable } from "@workspace/db";
+import { signCompanyToken } from "../auth/jwt";
 import { registerCompany } from "../auth/service";
-import { signCompanyToken, signApplicantToken } from "../auth/jwt";
 
 describe("API Integration Tests (Highest Quality)", () => {
   beforeEach(async (context) => {
@@ -14,7 +13,6 @@ describe("API Integration Tests (Highest Quality)", () => {
 
   describe("Public Job Feed", () => {
     it("GET /api/jobs returns list of all jobs with counts", async () => {
-      // Setup: Create a company and a job
       const company = await registerCompany({
         name: "Test Corp",
         email: uniqEmail("company"),
@@ -55,7 +53,7 @@ describe("API Integration Tests (Highest Quality)", () => {
       const res = await request(app)
         .post("/api/jobs")
         .set("Authorization", `Bearer ${token}`)
-        .send({ title: "", capacity: -1 }); // Invalid
+        .send({ title: "", capacity: -1 });
       
       expect(res.status).toBe(400);
     });
@@ -63,7 +61,6 @@ describe("API Integration Tests (Highest Quality)", () => {
 
   describe("Full Application Flow", () => {
     it("Lifecycle: Register -> Apply -> Acknowledge -> Exit", async () => {
-      // 1. Setup Company & Job
       const company = await registerCompany({
         name: "Test Corp",
         email: uniqEmail("corp"),
@@ -75,7 +72,6 @@ describe("API Integration Tests (Highest Quality)", () => {
         .send({ title: "Full Stack", capacity: 1 });
       const jobId = jobRes.body.id;
 
-      // 2. Register Applicant
       const regRes = await request(app)
         .post("/api/applicant/auth/register")
         .send({
@@ -85,7 +81,6 @@ describe("API Integration Tests (Highest Quality)", () => {
         });
       const applicantToken = regRes.body.token;
 
-      // 3. Apply (should be ACTIVE)
       const applyRes = await request(app)
         .post(`/api/jobs/${jobId}/apply`)
         .set("Authorization", `Bearer ${applicantToken}`);
@@ -93,13 +88,11 @@ describe("API Integration Tests (Highest Quality)", () => {
       expect(applyRes.body.state).toBe("ACTIVE");
       const appId = applyRes.body.id;
 
-      // 4. Acknowledge
       const ackRes = await request(app)
         .post(`/api/applications/${appId}/acknowledge`)
         .set("Authorization", `Bearer ${applicantToken}`);
       expect(ackRes.status).toBe(200);
 
-      // 5. Exit
       const exitRes = await request(app)
         .post(`/api/applications/${appId}/exit`)
         .set("Authorization", `Bearer ${applicantToken}`);
@@ -109,13 +102,13 @@ describe("API Integration Tests (Highest Quality)", () => {
   });
 
   describe("Edge Case Error Handling", () => {
-    it("returns 404 for non-existent entities", async () => {
-      const res = await request(app).get("/api/jobs/invalid-uuid-format");
-      expect(res.status).toBe(404);
+    it("returns 400 for malformed IDs (Zod validation)", async () => {
+      const res = await request(app).get("/api/jobs/not-a-uuid");
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("VALIDATION_ERROR");
     });
 
     it("returns 409 for invalid state transitions (e.g. double exit)", async () => {
-      // Setup
       const company = await registerCompany({ name: "C", email: uniqEmail("c"), password: "p" });
       const job = await request(app).post("/api/jobs").set("Authorization", `Bearer ${signCompanyToken(company.id)}`).send({ title: "T", capacity: 1 });
       const appRes = await request(app).post("/api/applicant/auth/register").send({ name: "A", email: uniqEmail("a"), password: "p" });
@@ -124,14 +117,47 @@ describe("API Integration Tests (Highest Quality)", () => {
       const token = appRes.body.token;
       const appId = apply.body.id;
 
-      // First exit
       await request(app).post(`/api/applications/${appId}/exit`).set("Authorization", `Bearer ${token}`);
-      // Second exit (no-op or handled gracefully by service)
       const res = await request(app).post(`/api/applications/${appId}/exit`).set("Authorization", `Bearer ${token}`);
       
-      // Current implementation returns 200 with current state for idempotency in exitApplication
       expect(res.status).toBe(200);
       expect(res.body.state).toBe("EXITED");
+    });
+  });
+
+  describe("Observability & Analytics", () => {
+    it("GET /api/jobs/:jobId returns full dashboard for company", async () => {
+      const company = await registerCompany({ name: "Obs Corp", email: uniqEmail("obs"), password: "p" });
+      const token = signCompanyToken(company.id);
+      const job = await request(app).post("/api/jobs").set("Authorization", `Bearer ${token}`).send({ title: "Dev", capacity: 1 });
+      const jobId = job.body.id;
+
+      const applicant = await request(app).post("/api/applicant/auth/register").send({ name: "A", email: uniqEmail("a"), password: "p" });
+      await request(app).post(`/api/jobs/${jobId}/apply`).set("Authorization", `Bearer ${applicant.body.token}`);
+
+      const dash = await request(app)
+        .get(`/api/jobs/${jobId}`)
+        .set("Authorization", `Bearer ${token}`);
+      
+      expect(dash.status).toBe(200);
+      expect(dash.body.job.title).toBe("Dev");
+      expect(dash.body.active.length).toBe(1);
+    });
+
+    it("GET /api/jobs/:jobId/replay reconstructs historical state", async () => {
+      const company = await registerCompany({ name: "Replay Corp", email: uniqEmail("rep"), password: "p" });
+      const token = signCompanyToken(company.id);
+      const job = await request(app).post("/api/jobs").set("Authorization", `Bearer ${token}`).send({ title: "History", capacity: 1 });
+      const jobId = job.body.id;
+
+      const asOf = new Date().toISOString();
+
+      const res = await request(app)
+        .get(`/api/jobs/${jobId}/replay?asOf=${asOf}`)
+        .set("Authorization", `Bearer ${token}`);
+      
+      expect(res.status).toBe(200);
+      expect(res.body.applications).toBeDefined();
     });
   });
 });

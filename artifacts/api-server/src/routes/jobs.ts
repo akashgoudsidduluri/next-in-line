@@ -1,12 +1,15 @@
 import { Router, type IRouter } from "express";
-import { CreateJobBody } from "@workspace/api-zod";
-import { toEventLogDto, toDashboardApplicationDto, toJobDto } from "../services/dto";
+import {
+  CreateJobBody,
+  JobIdParams,
+  ReplayJobQuery,
+} from "@workspace/api-zod";
 import { getJobDashboard } from "../services/queueEngine";
 import { jobBelongsToCompany } from "../services/queueEngineExt";
 import { replayJob } from "../services/replay";
 import * as jobService from "../services/jobService";
 import { requireCompany, getCompanyAuth } from "../auth/middleware";
-import { ForbiddenError, NotFoundError, BadRequestError } from "../lib/errors";
+import { ForbiddenError, NotFoundError } from "../lib/errors";
 
 const router: IRouter = Router();
 
@@ -38,27 +41,14 @@ router.post("/jobs", requireCompany, async (req, res, next) => {
 
 router.get("/jobs/:jobId", requireCompany, async (req, res, next) => {
   try {
-    const jobId = String(req.params["jobId"]);
+    const { jobId } = JobIdParams.parse(req.params);
     const auth = getCompanyAuth(req);
     const owns = await jobBelongsToCompany(jobId, auth.companyId);
     if (!owns) throw new ForbiddenError("Not your job");
 
     const dash = await getJobDashboard(jobId);
     if (!dash) throw new NotFoundError("Job not found");
-    res.json({
-      job: {
-        ...toJobDto(dash.job),
-        activeCount: dash.active.length,
-        waitlistCount: dash.waitlist.length,
-      },
-      active: dash.active.map((a) =>
-        toDashboardApplicationDto(a.app, a.applicant),
-      ),
-      waitlist: dash.waitlist.map((a) =>
-        toDashboardApplicationDto(a.app, a.applicant),
-      ),
-      recentEvents: dash.recentEvents.map(toEventLogDto),
-    });
+    res.json(dash);
   } catch (err) {
     next(err);
   }
@@ -66,7 +56,7 @@ router.get("/jobs/:jobId", requireCompany, async (req, res, next) => {
 
 router.get("/jobs/:jobId/events", requireCompany, async (req, res, next) => {
   try {
-    const jobId = String(req.params["jobId"]);
+    const { jobId } = JobIdParams.parse(req.params);
     const auth = getCompanyAuth(req);
     const owns = await jobBelongsToCompany(jobId, auth.companyId);
     if (!owns) throw new ForbiddenError("Not your job");
@@ -80,19 +70,12 @@ router.get("/jobs/:jobId/events", requireCompany, async (req, res, next) => {
 
 router.get("/jobs/:jobId/replay", requireCompany, async (req, res, next) => {
   try {
-    const jobId = String(req.params["jobId"]);
+    const { jobId } = JobIdParams.parse(req.params);
+    const { asOf } = ReplayJobQuery.parse(req.query);
     const auth = getCompanyAuth(req);
     const owns = await jobBelongsToCompany(jobId, auth.companyId);
     if (!owns) throw new ForbiddenError("Not your job");
 
-    const asOfRaw = req.query["asOf"];
-    if (typeof asOfRaw !== "string") {
-      throw new BadRequestError("Query parameter 'asOf' (ISO8601) is required");
-    }
-    const asOf = new Date(asOfRaw);
-    if (Number.isNaN(asOf.getTime())) {
-      throw new BadRequestError("Query parameter 'asOf' must be a valid ISO8601 timestamp");
-    }
     const result = await replayJob(jobId, asOf);
     res.json(result);
   } catch (err) {

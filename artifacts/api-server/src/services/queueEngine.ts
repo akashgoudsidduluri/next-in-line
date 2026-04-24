@@ -25,8 +25,12 @@ import {
   eventLogsTable,
   type Application,
   type EventType,
+  type Applicant,
+  type Job,
+  type EventLog,
 } from "@workspace/db";
-import { NotFoundError, ConflictError, HttpError, DatabaseInsertError, DatabaseUpdateError, DatabaseQueryError } from "../lib/errors";
+import { NotFoundError, ConflictError, DatabaseInsertError, DatabaseUpdateError } from "../lib/errors";
+import { toDashboardDto, type DashboardDto } from "./dto";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -448,7 +452,7 @@ export async function getApplicationStatus(applicationId: string) {
   return rows[0] ?? null;
 }
 
-export async function getJobDashboard(jobId: string) {
+export async function getJobDashboard(jobId: string): Promise<DashboardDto | null> {
   const jobRow = await db
     .select()
     .from(jobsTable)
@@ -479,11 +483,6 @@ export async function getJobDashboard(jobId: string) {
       .limit(20)
   ]);
 
-  return {
-    job: jobRow[0],
-    active,
-    waitlist,
-    recentEvents,
-  };
+  return toDashboardDto(jobRow[0], active, waitlist, recentEvents);
 }
 
