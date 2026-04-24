@@ -30,6 +30,7 @@ import {
   type EventLog,
 } from "@workspace/db";
 import { NotFoundError, ConflictError, DatabaseInsertError, DatabaseUpdateError } from "../lib/errors";
+import { logger } from "../lib/logger";
 import { toDashboardDto, type DashboardDto, toApplicationDto, type ApplicationDto, toApplicationStatusDto, type ApplicationStatusDto } from "./dto";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -38,9 +39,14 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
  * Lock the job row to serialise queue mutations for this job.
- * Throws if the job does not exist.
+ * 
+ * Contract:
+ * - Side Effects: Acquires a row-level write lock (SELECT FOR UPDATE) on the jobs table.
+ * - Throws: NotFoundError if the jobId does not exist.
+ * - Return: Job metadata (id, capacity, decaySeconds).
  */
 async function lockJob(tx: Tx, jobId: string) {
+  logger.debug({ jobId }, "Acquiring job lock");
   const rows = await tx
     .select({
       id: jobsTable.id,
@@ -52,7 +58,10 @@ async function lockJob(tx: Tx, jobId: string) {
     .for("update");
 
   const row = rows[0];
-  if (!row) throw new NotFoundError(`Job not found: ${jobId}`);
+  if (!row) {
+    logger.warn({ jobId }, "Lock acquisition failed: job not found");
+    throw new NotFoundError(`Job not found: ${jobId}`);
+  }
   return {
     id: row.id,
     capacity: row.capacity,
@@ -91,8 +100,13 @@ async function logEvent(
 
 /**
  * Promote the head of the waitlist (queue_position = 1) to ACTIVE.
- * Caller must hold the job lock. No-op if the waitlist is empty or capacity is full.
- * Returns the promoted application, or null.
+ * 
+ * Invariants:
+ * - Must be called within a transaction holding the job lock.
+ * - Promotion only occurs if current ACTIVE count < capacity.
+ * - If promoted, the waitlist is compacted (positions 2..N reflow to 1..N-1).
+ * 
+ * Returns the promoted application, or null if capacity is full or waitlist is empty.
  */
 async function promoteHeadIfPossible(
   tx: Tx,
@@ -102,7 +116,10 @@ async function promoteHeadIfPossible(
   reason: "EXIT_RECOVERY" | "DECAY_RECOVERY" | "CAPACITY_EXPANSION",
 ): Promise<Application | null> {
   const active = await countActive(tx, jobId);
-  if (active >= capacity) return null;
+  if (active >= capacity) {
+    logger.info({ jobId, active, capacity }, "Promotion skipped: job at full capacity");
+    return null;
+  }
 
   const head = await tx
     .select()
@@ -115,7 +132,11 @@ async function promoteHeadIfPossible(
       ),
     )
     .limit(1);
-  if (!head[0]) return null;
+  
+  if (!head[0]) {
+    logger.debug({ jobId }, "Promotion skipped: waitlist is empty");
+    return null;
+  }
 
   const ackDeadline = new Date(Date.now() + decaySeconds * 1000);
 
@@ -138,7 +159,17 @@ async function promoteHeadIfPossible(
         WHERE job_id = ${jobId} AND state = 'WAITLISTED' AND queue_position > 1`,
   );
 
-  if (!promoted) return null;
+  if (!promoted) {
+    throw new DatabaseUpdateError("Application", "Failed to promote waitlisted applicant");
+  }
+
+  logger.info({ 
+    jobId, 
+    applicationId: promoted.id, 
+    reason,
+    ackDeadline 
+  }, "Waitlist head promoted to ACTIVE");
+
   await logEvent(tx, promoted.id, jobId, "PROMOTED", {
     reason,
     ackDeadline: ackDeadline.toISOString(),
@@ -164,6 +195,11 @@ async function cascadePromote(
     if (!next) break;
     promoted++;
   }
+  
+  if (promoted > 0) {
+    logger.info({ jobId, promoted, reason }, "Cascade promotion complete");
+  }
+  
   return promoted;
 }
 
@@ -177,17 +213,22 @@ export interface ApplyInput {
 /**
  * Apply to a job. Atomic and capacity-aware.
  *
- * The job row is locked for the duration of the transaction. If active count
- * is below capacity the new application becomes ACTIVE with an ack deadline;
- * otherwise it is appended to the waitlist at position max(pos)+1.
+ * Contract:
+ * - Invariants: For a given job, total ACTIVE apps <= capacity.
+ * - Side Effects:
+ *   1. Locks the job row.
+ *   2. Inserts application row.
+ *   3. Writes APPLIED and potentially PROMOTED events.
+ * - Logic: If (count(ACTIVE) < capacity) -> ACTIVE else -> WAITLISTED at back.
+ * - Return: Mapped ApplicationDto.
  */
 export async function applyToJob(input: ApplyInput): Promise<ApplicationDto> {
   return db.transaction(async (tx) => {
     const job = await lockJob(tx, input.jobId);
-
     const active = await countActive(tx, input.jobId);
 
     if (active < job.capacity) {
+      logger.info({ jobId: input.jobId, applicantId: input.applicantId, active, capacity: job.capacity }, "Admitting applicant as ACTIVE");
       const ackDeadline = new Date(Date.now() + job.decaySeconds * 1000);
       const [app] = await tx
         .insert(applicationsTable)
@@ -211,6 +252,7 @@ export async function applyToJob(input: ApplyInput): Promise<ApplicationDto> {
     }
 
     const nextPos = (await maxQueuePosition(tx, input.jobId)) + 1;
+    logger.info({ jobId: input.jobId, applicantId: input.applicantId, queuePosition: nextPos }, "Admitting applicant as WAITLISTED");
     const [app] = await tx
       .insert(applicationsTable)
       .values({
@@ -353,14 +395,17 @@ export async function exitApplication(
 }
 
 /**
- * Decay handler — invoked by the scheduler when an ACTIVE applicant fails to
- * acknowledge before their deadline. The applicant is NOT removed; they are
- * pushed back onto the waitlist at position min(maxPos + 1, currentPos +
- * PENALTY_OFFSET) and the head of the waitlist is promoted to take their slot.
+ * Decay handler — invoked when an ACTIVE applicant fails to acknowledge.
  *
- * Returns true if a decay actually happened (i.e. the application was still
- * unacknowledged ACTIVE when the lock was acquired). The scheduler can then
- * run again to handle further cascades.
+ * Contract:
+ * - Invariants:
+ *   1. Decayed apps return to WAITLISTED at the very back (maxPosition + 1).
+ *   2. Freed ACTIVE slot is immediately filled by head of waitlist (cascading).
+ * - Side Effects:
+ *   1. Re-validates state/deadline after lock.
+ *   2. Updates application state to WAITLISTED.
+ *   3. Triggers cascadePromote.
+ * - Return: Boolean (true if decay was processed, false if state had changed).
  */
 export async function decayActiveApplication(
   applicationId: string,
@@ -382,14 +427,13 @@ export async function decayActiveApplication(
       app.ackDeadline == null ||
       app.ackDeadline.getTime() > Date.now()
     ) {
+      logger.debug({ applicationId, state: app.state, ackAt: app.acknowledgedAt }, "Decay aborted: application state no longer eligible");
       return false;
     }
 
-    // Decayed applicants move to the very back of the waitlist.
-    // This maintains the gap-free invariant while ensuring they 
-    // must wait for the entire current waitlist to be processed.
     const maxPos = await maxQueuePosition(tx, app.jobId);
     const newPos = maxPos + 1;
+    logger.info({ applicationId, jobId: app.jobId, newPos }, "Processing application decay");
 
     const [decayed] = await tx
       .update(applicationsTable)

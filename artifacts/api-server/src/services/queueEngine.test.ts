@@ -7,6 +7,7 @@ import {
   exitApplication,
   getApplicationStatus,
 } from "./queueEngine";
+import { createJob } from "./jobService";
 import { findOrCreateApplicant } from "./applicantService";
 import { resetDb, uniqEmail } from "../__tests__/resetDb";
 import { NotFoundError, ConflictError } from "../lib/errors";
@@ -155,6 +156,58 @@ describe("QueueEngine Core", () => {
       expect(remaining[0].queuePosition).toBe(1);
       expect(remaining[1].id).toBe(app4.id);
       expect(remaining[1].queuePosition).toBe(2); // D shifted from 3 to 2
+    });
+  });
+
+  describe("Rigorous Invariant Stress Test (Elite)", () => {
+    it("preserves all invariants over a randomized sequence of 50 operations", async () => {
+      const { id: jobId } = await createJob({ title: "Stress Job", capacity: 3, decaySeconds: 60, companyId: "c1" });
+      const apps: string[] = [];
+
+      async function verifyInvariants() {
+        const rows = await db.select().from(applicationsTable).where(eq(applicationsTable.jobId, jobId));
+        
+        // Invariant 1: ACTIVE count <= capacity
+        const active = rows.filter(r => r.state === "ACTIVE");
+        expect(active.length).toBeLessThanOrEqual(3);
+
+        // Invariant 2: WAITLISTED positions are 1..N and gap-free
+        const waitlisted = rows.filter(r => r.state === "WAITLISTED").sort((a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0));
+        waitlisted.forEach((r, idx) => {
+          expect(r.queuePosition).toBe(idx + 1);
+        });
+
+        // Invariant 3: ACTIVE/EXITED have null position
+        rows.filter(r => r.state !== "WAITLISTED").forEach(r => {
+          expect(r.queuePosition).toBeNull();
+        });
+      }
+
+      for (let i = 0; i < 50; i++) {
+        const op = Math.floor(Math.random() * 3);
+        if (op === 0 || apps.length === 0) {
+          // APPLY
+          const res = await applyToJob({ jobId, applicantId: `applicant-${i}` });
+          apps.push(res.id);
+        } else if (op === 1) {
+          // ACK or EXIT (randomly)
+          const targetId = apps[Math.floor(Math.random() * apps.length)];
+          const rows = await db.select().from(applicationsTable).where(eq(applicationsTable.id, targetId)).limit(1);
+          const app = rows[0];
+          if (app.state === "ACTIVE" && !app.acknowledgedAt) {
+             await acknowledgeApplication(targetId);
+          } else if (app.state !== "EXITED") {
+             await exitApplication(targetId);
+          }
+        } else {
+          // EXIT a waitlisted one if possible
+          const rows = await db.select().from(applicationsTable).where(and(eq(applicationsTable.jobId, jobId), eq(applicationsTable.state, "WAITLISTED"))).limit(1);
+          if (rows[0]) {
+            await exitApplication(rows[0].id);
+          }
+        }
+        await verifyInvariants();
+      }
     });
   });
 });

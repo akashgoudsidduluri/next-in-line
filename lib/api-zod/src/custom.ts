@@ -17,12 +17,12 @@ export const ReplayJobQuery = zod.object({
  * Generic Params schema for routes with :jobId
  */
 export const JobIdParams = zod.object({
-  jobId: zod.string().uuid().or(zod.string().min(1)),
+  jobId: zod.string().uuid({ message: "jobId must be a valid UUID" }),
 });
 
 /**
  * Generic Params schema for routes with :applicationId
  */
 export const ApplicationIdParams = zod.object({
-  applicationId: zod.string().uuid().or(zod.string().min(1)),
+  applicationId: zod.string().uuid({ message: "applicationId must be a valid UUID" }),
 });
