@@ -2,23 +2,15 @@ import { z } from "zod";
 
 /**
  * High-level configuration contract. 
- * We use dynamic key construction to ensure zero false positives with 
- * over-aggressive security scanners while maintaining type safety.
+ * Using explicit keys ensures perfect type inference and zero 'unknown' types.
  */
-const K = {
-  ENV: "NODE_ENV",
-  PRT: "PORT",
-  DB: "DATABASE" + "_" + "URL",
-  SEC: "SESSION" + "_" + "SECRET",
-  DCY: "DEFAULT_DECAY_SECONDS",
-} as const;
-
 const configSchema = z.object({
-  [K.ENV]: z.enum(["development", "test", "production"]).default("development"),
-  [K.PRT]: z.coerce.number().default(3000),
-  [K.DB]: z.string().url(),
-  [K.SEC]: z.string().min(8),
-  [K.DCY]: z.coerce.number().default(600),
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  PORT: z.coerce.number().default(3000),
+  DATABASE_URL: z.string().url(),
+  SESSION_SECRET: z.string().min(8),
+  ALLOWED_ORIGINS: z.string().default("*"),
+  DEFAULT_DECAY_SECONDS: z.coerce.number().default(600),
 });
 
 export type Config = z.infer<typeof configSchema>;
