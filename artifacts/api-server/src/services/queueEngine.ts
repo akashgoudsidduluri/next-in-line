@@ -92,6 +92,7 @@ async function promoteHeadIfPossible(
   jobId: string,
   decaySeconds: number,
   capacity: number,
+  reason: "EXIT_RECOVERY" | "DECAY_RECOVERY" | "CAPACITY_EXPANSION",
 ): Promise<Application | null> {
   const active = await countActive(tx, jobId);
   if (active >= capacity) return null;
@@ -132,6 +133,7 @@ async function promoteHeadIfPossible(
 
   if (!promoted) return null;
   await logEvent(tx, promoted.id, jobId, "PROMOTED", {
+    reason,
     ackDeadline: ackDeadline.toISOString(),
     decayCount: promoted.decayCount,
   });
@@ -147,10 +149,11 @@ async function cascadePromote(
   jobId: string,
   decaySeconds: number,
   capacity: number,
+  reason: "EXIT_RECOVERY" | "DECAY_RECOVERY" | "CAPACITY_EXPANSION",
 ): Promise<number> {
   let promoted = 0;
   while (true) {
-    const next = await promoteHeadIfPossible(tx, jobId, decaySeconds, capacity);
+    const next = await promoteHeadIfPossible(tx, jobId, decaySeconds, capacity, reason);
     if (!next) break;
     promoted++;
   }
@@ -302,6 +305,7 @@ export async function exitApplication(
       app.jobId,
       job.decaySeconds,
       job.capacity,
+      "EXIT_RECOVERY",
     );
     return { application: updated, promoted };
   });
@@ -367,7 +371,7 @@ export async function decayActiveApplication(
 
     // Promote the next head into the freed slot — and cascade in case more
     // slots are open or another decay just happened on the same job.
-    await cascadePromote(tx, app.jobId, job.decaySeconds, job.capacity);
+    await cascadePromote(tx, app.jobId, job.decaySeconds, job.capacity, "DECAY_RECOVERY");
     return true;
   });
 }
