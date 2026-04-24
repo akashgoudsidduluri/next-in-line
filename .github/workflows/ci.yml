@@ -9,21 +9,13 @@ jobs:
   test:
     runs-on: ubuntu-latest
     
-    # Use variables to avoid hardcoded secrets in the YAML structure
-    env:
-      PG_USER: postgres
-      PG_PASS: postgres
-      PG_DB: hiring_pipeline
-      # Construct the URL dynamically to help bypass regex scanners for hardcoded credentials
-      TEST_DB_URL: "postgresql://postgres:postgres@localhost:5432/hiring_pipeline"
-
     services:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
+          # Using a generic placeholder for the service definition
           POSTGRES_DB: hiring_pipeline
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
@@ -48,15 +40,25 @@ jobs:
       - name: Build
         run: pnpm run build
 
+      - name: Provision Test Environment
+        run: |
+          # Provision dynamic, non-hardcoded credentials for the test runner
+          # We use 'trust' for the local-only CI container to eliminate password exposure
+          DB_URL="postgresql://postgres@localhost:5432/hiring_pipeline"
+          echo "DATABASE_URL=$DB_URL" >> $GITHUB_ENV
+          
+          # Generate a one-time-use session secret for this specific CI run
+          S_SEC="ci_$(openssl rand -hex 16)"
+          echo "::add-mask::$S_SEC"
+          echo "SESSION_SECRET=$S_SEC" >> $GITHUB_ENV
+      
       - name: Push Database Schema
         run: pnpm --filter @workspace/db run push
         env:
-          DATABASE_URL: ${{ env.TEST_DB_URL }}
+          DATABASE_URL: ${{ env.DATABASE_URL }}
       
       - name: Run tests
         run: pnpm --filter @workspace/api-server run test
         env:
-          DATABASE_URL: ${{ env.TEST_DB_URL }}
-          # Obfuscated secret name to bypass 'yaml-credential-assignment' checks
-          S_SECRET: "ci-test-secret-long-enough-for-security"
-          SESSION_SECRET: "ci-test-secret-long-enough-for-security"
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          SESSION_SECRET: ${{ env.SESSION_SECRET }}

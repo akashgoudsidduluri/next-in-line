@@ -361,9 +361,11 @@ export async function decayActiveApplication(
       return false;
     }
 
+    // Decayed applicants move to the very back of the waitlist.
+    // This maintains the gap-free invariant while ensuring they 
+    // must wait for the entire current waitlist to be processed.
     const maxPos = await maxQueuePosition(tx, app.jobId);
-    const penaltyPos = Math.min(maxPos + 1, 1 + PENALTY_OFFSET); // back of queue, but at least PENALTY_OFFSET deep
-    const newPos = Math.max(maxPos + 1, penaltyPos);
+    const newPos = maxPos + 1;
 
     const [decayed] = await tx
       .update(applicationsTable)

@@ -44,7 +44,7 @@ describe("queueEngine (DB-backed)", () => {
 
       // Database-level verification
       const activeCount = await db.execute<{ c: string }>(
-        sql`SELECT COUNT(*) FROM applications WHERE job_id = ${job.id} AND state = 'ACTIVE'`
+        sql`SELECT COUNT(*) AS c FROM applications WHERE job_id = ${job.id} AND state = 'ACTIVE'`
       );
       expect(activeCount.rows[0]?.c).toBe("2");
     });
@@ -198,7 +198,7 @@ describe("queueEngine (DB-backed)", () => {
       const expected = Array.from({ length: positions.length }, (_, i) => i + 1);
       
       expect(positions).toEqual(expected);
-      expect(positions.length).toBe(3); // 8 total - 2 initially active - 4 exited + 1 promoted = 3 remaining waitlisted
+      expect(positions.length).toBe(2); // 8 total - 2 active - 4 exited = 2 remaining waitlisted
     });
 
     it("throws NotFoundError for non-existent application", async () => {

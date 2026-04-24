@@ -49,7 +49,7 @@ describe("decayLoop", () => {
 
     expect(appA.state).toBe("WAITLISTED");
     expect(appA.decayCount).toBe(1);
-    expect(appA.queuePosition).toBe(1); // Since B was promoted, A is now first in line
+    expect(appA.queuePosition).toBe(1); // Back of line (only one in list)
     expect(appA.acknowledgedAt).toBeNull();
     expect(appA.ackDeadline).toBeNull();
 
