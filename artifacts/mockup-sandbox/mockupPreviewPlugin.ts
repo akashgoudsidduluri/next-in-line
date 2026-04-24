@@ -118,7 +118,7 @@ export function mockupPreviewPlugin(): Plugin {
     name: "mockup-preview",
     enforce: "pre",
 
-    configResolved(config) {
+    configResolved(config: any) {
       root = config.root;
     },
 
@@ -126,7 +126,7 @@ export function mockupPreviewPlugin(): Plugin {
       await refresh();
     },
 
-    async configureServer(viteServer) {
+    async configureServer(viteServer: any) {
       await refresh();
 
       const mockupsAbsDir = getMockupsAbsDir();
@@ -155,7 +155,7 @@ export function mockupPreviewPlugin(): Plugin {
         }
       });
 
-      viteServer.middlewares.use((req, res, next) => {
+      viteServer.middlewares.use((req: any, res: any, next: any) => {
         const requestUrl = new URL(req.url ?? "/", "http://127.0.0.1");
         const pathname = requestUrl.pathname;
         const originalEnd = res.end.bind(res);
@@ -176,5 +176,5 @@ export function mockupPreviewPlugin(): Plugin {
         await watcher.close();
       }
     },
-  };
+  } as any;
 }

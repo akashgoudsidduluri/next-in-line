@@ -15,7 +15,6 @@ describe("DTO Mappers", () => {
     email: "alice@example.com",
     passwordHash: "hash",
     createdAt: mockDate,
-    updatedAt: mockDate,
   };
 
   const mockApplication: Application = {
@@ -81,7 +80,6 @@ describe("DTO Mappers", () => {
         capacity: 5,
         decaySeconds: 600,
         createdAt: mockDate,
-        updatedAt: mockDate,
       };
       const dto = toJobDto(mockJob);
       expect(dto).toEqual({
