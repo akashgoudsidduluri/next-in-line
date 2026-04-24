@@ -27,7 +27,7 @@ describe("API Integration Tests", () => {
     // Setup Applicant
     const applicantEmail = uniqEmail("applicant");
     const regRes = await request(app)
-      .post("/applicant/auth/register")
+      .post("/api/applicant/auth/register")
       .send({
         name: "Alice",
         email: applicantEmail,
@@ -38,7 +38,7 @@ describe("API Integration Tests", () => {
 
     // Create a Job
     const jobRes = await request(app)
-      .post("/jobs")
+      .post("/api/jobs")
       .set("Authorization", `Bearer ${companyToken}`)
       .send({
         title: "Software Engineer",
@@ -51,7 +51,7 @@ describe("API Integration Tests", () => {
   it("Full Application Lifecycle: Apply -> Acknowledge -> Exit", async () => {
     // 1. Apply
     const applyRes = await request(app)
-      .post(`/jobs/${jobId}/apply`)
+      .post(`/api/jobs/${jobId}/apply`)
       .set("Authorization", `Bearer ${applicantToken}`);
     
     expect(applyRes.status).toBe(201);
@@ -60,7 +60,7 @@ describe("API Integration Tests", () => {
 
     // 2. Acknowledge
     const ackRes = await request(app)
-      .post(`/applications/${applicationId}/acknowledge`)
+      .post(`/api/applications/${applicationId}/acknowledge`)
       .set("Authorization", `Bearer ${applicantToken}`);
     
     expect(ackRes.status).toBe(200);
@@ -68,7 +68,7 @@ describe("API Integration Tests", () => {
 
     // 3. Exit
     const exitRes = await request(app)
-      .post(`/applications/${applicationId}/exit`)
+      .post(`/api/applications/${applicationId}/exit`)
       .set("Authorization", `Bearer ${applicantToken}`);
     
     expect(exitRes.status).toBe(200);
@@ -78,7 +78,7 @@ describe("API Integration Tests", () => {
   it("Enforces Authorization: Applicant cannot acknowledge another's application", async () => {
     // Create another applicant
     const otherRes = await request(app)
-      .post("/applicant/auth/register")
+      .post("/api/applicant/auth/register")
       .send({
         name: "Bob",
         email: uniqEmail("other"),
@@ -88,13 +88,13 @@ describe("API Integration Tests", () => {
 
     // First applicant applies
     const applyRes = await request(app)
-      .post(`/jobs/${jobId}/apply`)
+      .post(`/api/jobs/${jobId}/apply`)
       .set("Authorization", `Bearer ${applicantToken}`);
     const appId = applyRes.body.id;
 
     // Other applicant tries to ack
     const ackRes = await request(app)
-      .post(`/applications/${appId}/acknowledge`)
+      .post(`/api/applications/${appId}/acknowledge`)
       .set("Authorization", `Bearer ${otherToken}`);
     
     expect(ackRes.status).toBe(403);
