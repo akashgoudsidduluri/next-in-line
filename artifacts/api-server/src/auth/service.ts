@@ -12,7 +12,7 @@ import {
   type Company,
   type Applicant,
 } from "@workspace/db";
-import { ConflictError, UnauthorizedError, BadRequestError } from "../lib/errors";
+import { ConflictError, UnauthorizedError, BadRequestError, HttpError } from "../lib/errors";
 
 const BCRYPT_COST = 10;
 
@@ -45,7 +45,7 @@ export async function registerCompany(input: {
     .insert(companiesTable)
     .values({ name: input.name.trim(), email, passwordHash })
     .returning();
-  if (!created) throw new Error("Failed to create company");
+  if (!created) throw new HttpError(500, "DATABASE_ERROR", "Failed to create company");
   return created;
 }
 
@@ -87,7 +87,7 @@ export async function registerApplicant(input: {
     .insert(applicantsTable)
     .values({ name: input.name.trim(), email, passwordHash })
     .returning();
-  if (!created) throw new Error("Failed to create applicant");
+  if (!created) throw new HttpError(500, "DATABASE_ERROR", "Failed to create applicant");
   return created;
 }
 

@@ -30,7 +30,7 @@ import { NotFoundError, ConflictError, HttpError } from "../lib/errors";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-const PENALTY_OFFSET = 2; // decayed applicants drop 2 positions further back
+
 
 /**
  * Lock the job row to serialise queue mutations for this job.
