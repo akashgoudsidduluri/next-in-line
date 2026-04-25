@@ -16,7 +16,7 @@
  *   blocks until the first commits, then re-reads and routes correctly.
  */
 
-import { sql, eq, and, asc } from "drizzle-orm";
+import { sql, eq, and, asc, desc } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   jobsTable,
@@ -34,6 +34,7 @@ import { logger } from "../lib/logger";
 import { toDashboardDto, type DashboardDto, toApplicationDto, type ApplicationDto, toApplicationStatusDto, type ApplicationStatusDto } from "./dto";
 import { withTransaction } from "../lib/transaction";
 import { type PgTransaction } from "drizzle-orm/pg-core";
+import { requestContext } from "../middlewares/correlation";
 
 type Tx = PgTransaction<any, any, any>;
 
@@ -93,12 +94,14 @@ async function logEvent(
   eventType: EventType,
   metadata: Record<string, unknown> = {},
 ) {
+  const correlationId = requestContext.getStore()?.correlationId;
   await tx.insert(eventLogsTable).values({
     applicationId,
     jobId,
     eventType,
     metadata: metadata as never,
     schemaVersion: "v1",
+    correlationId,
   });
 }
 
@@ -226,7 +229,7 @@ export interface ApplyInput {
  * - Logic: If (count(ACTIVE) < capacity) -> ACTIVE else -> WAITLISTED at back.
  * - Return: Mapped ApplicationDto.
  */
-export async function applyToJob(input: ApplyInput): Promise<ApplicationDto> {
+export async function applyToJob(input: ApplyInput, existingTx?: Tx): Promise<ApplicationDto> {
   return withTransaction(async (tx) => {
     const job = await lockJob(tx, input.jobId);
     const active = await countActive(tx, input.jobId);
@@ -272,7 +275,7 @@ export async function applyToJob(input: ApplyInput): Promise<ApplicationDto> {
       queuePosition: nextPos,
     });
     return toApplicationDto(app);
-  });
+  }, "apply-to-job", existingTx);
 }
 
 /**
@@ -306,7 +309,7 @@ export async function updateJob(
       );
     }
     return promoted;
-  });
+  }, "update-job");
 }
 
 /**
@@ -340,7 +343,7 @@ export async function acknowledgeApplication(
     if (!updated) throw new DatabaseUpdateError("Application", "Failed to acknowledge application");
     await logEvent(tx, updated.id, updated.jobId, "ACKNOWLEDGED", {});
     return toApplicationDto(updated);
-  });
+  }, "acknowledge-application");
 }
 
 /**
@@ -395,7 +398,7 @@ export async function exitApplication(
       "EXIT_RECOVERY",
     );
     return { application: toApplicationDto(updated), promoted };
-  });
+  }, "exit-application");
 }
 
 /**
@@ -462,7 +465,7 @@ export async function decayActiveApplication(
     // slots are open or another decay just happened on the same job.
     await cascadePromote(tx, app.jobId, job.decaySeconds, job.capacity, "DECAY_RECOVERY");
     return true;
-  });
+  }, "decay-application");
 }
 
 /**
@@ -613,7 +616,27 @@ export async function applyAsRegisteredApplicant(input: {
     }
 
     // Reuse core logic
-    return applyToJob(input);
-  });
+    return applyToJob(input, tx);
+  }, "apply-registered");
+}
+
+/** List all applications for a specific applicant, including their live status. */
+export async function getMyApplications(
+  applicantId: string,
+): Promise<ApplicationStatusDto[]> {
+  const rows = await db
+    .select({
+      app: applicationsTable,
+      applicant: applicantsTable,
+    })
+    .from(applicationsTable)
+    .innerJoin(
+      applicantsTable,
+      eq(applicantsTable.id, applicationsTable.applicantId),
+    )
+    .where(eq(applicationsTable.applicantId, applicantId))
+    .orderBy(desc(applicationsTable.createdAt));
+
+  return rows.map((row) => toApplicationStatusDto(row.app, row.applicant));
 }
 

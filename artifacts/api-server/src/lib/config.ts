@@ -41,7 +41,19 @@ const configSchema = z.object({
   PORT: z.coerce.number().default(3000),
   ALLOWED_ORIGINS: z.string().default("*"),
   DEFAULT_DECAY_SECONDS: z.coerce.number().default(600),
-  [ENV_MAP.DB]: z.string().url(),
+  [ENV_MAP.DB]: z.string().url().refine(
+    (val) => {
+      // Allow simpler URLs in test environment (e.g., for local postgres or mocking)
+      if (process.env.NODE_ENV === "test") return true;
+      
+      // postgresql://user:password@host:port/db
+      const hasCreds = /:\/\/.*:.*@/.test(val);
+      return hasCreds;
+    },
+    {
+      message: "Database URL must include a password (e.g. postgresql://user:password@host/db)",
+    }
+  ),
   [ENV_MAP.SEC]: z.string().min(32),
 });
 

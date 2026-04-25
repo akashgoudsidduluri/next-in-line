@@ -46,11 +46,7 @@ function Router() {
           <ApplicantPortal />
         </RequireApplicant>
       </Route>
-      <Route path="/apply/:applicationId">
-        <RequireApplicant>
-          <ApplicantView />
-        </RequireApplicant>
-      </Route>
+      <Route path="/apply/:applicationId" component={ApplicantView} />
 
       <Route component={NotFound} />
     </Switch>

@@ -13,19 +13,39 @@ import * as jobService from "../services/jobService";
 import { requireCompany, getCompanyAuth } from "../auth/middleware";
 import { ForbiddenError, NotFoundError } from "../lib/errors";
 
-const router: IRouter = Router();
+export const jobsRouter: IRouter = Router();
 
 /** Public — list jobs with live counts so applicants can browse. */
-router.get("/jobs", async (_req, res, next) => {
+jobsRouter.get("/jobs", async (req, res, next) => {
   try {
-    const jobs = await jobService.listJobsWithCounts();
+    const title = req.query.title as string | undefined;
+    const limit = req.query.limit ? Number(req.query.limit) : 50;
+    const offset = req.query.offset ? Number(req.query.offset) : 0;
+
+    const jobs = await jobService.listJobsWithCounts({
+      companyId: undefined,
+      title,
+      limit,
+      offset,
+    });
     res.json(jobs);
   } catch (err) {
     next(err);
   }
 });
 
-router.post("/jobs", requireCompany, async (req, res, next) => {
+/** Company — list only MY jobs with live counts. */
+jobsRouter.get("/jobs/me", requireCompany, async (req, res, next) => {
+  try {
+    const auth = getCompanyAuth(req);
+    const jobs = await jobService.listJobsWithCounts({ companyId: auth.companyId });
+    res.json(jobs);
+  } catch (err) {
+    next(err);
+  }
+});
+
+jobsRouter.post("/jobs", requireCompany, async (req, res, next) => {
   try {
     const body = CreateJobBody.parse(req.body);
     const auth = getCompanyAuth(req);
@@ -41,7 +61,7 @@ router.post("/jobs", requireCompany, async (req, res, next) => {
   }
 });
 
-router.get("/jobs/:jobId", requireCompany, async (req, res, next) => {
+jobsRouter.get("/jobs/:jobId", requireCompany, async (req, res, next) => {
   try {
     const { jobId } = JobIdParams.parse(req.params);
     const auth = getCompanyAuth(req);
@@ -56,7 +76,7 @@ router.get("/jobs/:jobId", requireCompany, async (req, res, next) => {
   }
 });
 
-router.get("/jobs/:jobId/events", requireCompany, async (req, res, next) => {
+jobsRouter.get("/jobs/:jobId/events", requireCompany, async (req, res, next) => {
   try {
     const { jobId } = JobIdParams.parse(req.params);
     const auth = getCompanyAuth(req);
@@ -70,7 +90,7 @@ router.get("/jobs/:jobId/events", requireCompany, async (req, res, next) => {
   }
 });
 
-router.get("/jobs/:jobId/replay", requireCompany, async (req, res, next) => {
+jobsRouter.get("/jobs/:jobId/replay", requireCompany, async (req, res, next) => {
   try {
     const { jobId } = JobIdParams.parse(req.params);
     const { asOf } = ReplayJobQuery.parse(req.query);
@@ -85,4 +105,4 @@ router.get("/jobs/:jobId/replay", requireCompany, async (req, res, next) => {
   }
 });
 
-export default router;
+export default jobsRouter;

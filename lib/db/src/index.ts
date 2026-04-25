@@ -10,6 +10,9 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
+const redactedUrl = process.env.DATABASE_URL.replace(/:[^@]+@/, ":****@");
+console.log(`[DB] Initializing connection to: ${redactedUrl}`);
+
 export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 export const db = drizzle(pool, { schema });
 

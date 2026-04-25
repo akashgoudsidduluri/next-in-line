@@ -13,9 +13,9 @@ const LoginBody = z.object({
   password: z.string().min(1).max(200),
 });
 
-const router: IRouter = Router();
+export const companyAuthRouter: IRouter = Router();
 
-router.post("/company/auth/register", async (req, res, next) => {
+companyAuthRouter.post("/company/auth/register", async (req, res, next) => {
   try {
     const body = RegisterBody.parse(req.body);
     const company = await registerCompany(body);
@@ -28,7 +28,7 @@ router.post("/company/auth/register", async (req, res, next) => {
   }
 });
 
-router.post("/company/auth/login", async (req, res, next) => {
+companyAuthRouter.post("/company/auth/login", async (req, res, next) => {
   try {
     const body = LoginBody.parse(req.body);
     const company = await loginCompany(body);
@@ -41,4 +41,4 @@ router.post("/company/auth/login", async (req, res, next) => {
   }
 });
 
-export default router;
+export default companyAuthRouter;

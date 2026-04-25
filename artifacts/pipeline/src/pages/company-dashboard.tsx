@@ -1,10 +1,9 @@
-import React, { useMemo } from "react";
+import React from "react";
 import {
-  useListJobs,
   useCreateJob,
-  getListJobsQueryKey,
+  useListJobs,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import {
   Card,
@@ -21,30 +20,41 @@ import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { Briefcase, ChevronRight, Plus } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { getMyJobIds, rememberMyJob } from "@/lib/local-tracking";
 
+/**
+ * Company Dashboard
+ * 
+ * State Reflection Strategy:
+ * - Deterministic Polling: Job metadata and live counts are refetched every 5s.
+ * - Optimistic Invalidation: On job creation, the 'jobs' cache is immediately invalidated to provide instant feedback.
+ * - Simplicity over Complexity: Polling was chosen over WebSockets/SSE to maintain a lean architecture while 
+ *   providing sufficient real-time feel for recruitment use cases.
+ */
 export default function CompanyDashboard() {
   const { auth } = useAuth();
   const queryClient = useQueryClient();
-  const { data: allJobs, isLoading } = useListJobs({
+  const companyId = auth?.role === "company" ? auth.company.id : "";
+
+  // List only MY jobs using the newly implemented ownership-based endpoint
+  const { data: myJobs, isLoading } = useListJobs({
     query: {
-      queryKey: getListJobsQueryKey(),
+      queryKey: ["jobs", "me", companyId],
+      queryFn: async () => {
+        const res = await fetch("/api/jobs/me", {
+          headers: auth ? { Authorization: `Bearer ${auth.token}` } : {},
+        });
+        if (!res.ok) throw new Error("Failed to fetch jobs");
+        return res.json();
+      },
       refetchInterval: 5000,
     },
   });
+
   const createJob = useCreateJob();
 
   const [title, setTitle] = React.useState("");
   const [capacity, setCapacity] = React.useState("3");
   const [decaySeconds, setDecaySeconds] = React.useState("300");
-  const [, force] = React.useReducer((x: number) => x + 1, 0);
-
-  const companyId = auth?.role === "company" ? auth.company.id : "";
-  const myJobIds = useMemo(() => new Set(getMyJobIds(companyId)), [companyId]);
-  const myJobs = useMemo(
-    () => (allJobs ?? []).filter((j) => myJobIds.has(j.id)),
-    [allJobs, myJobIds],
-  );
 
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
@@ -59,12 +69,10 @@ export default function CompanyDashboard() {
       },
       {
         onSuccess: (job) => {
-          rememberMyJob(companyId, job.id);
-          queryClient.invalidateQueries({ queryKey: getListJobsQueryKey() });
+          queryClient.invalidateQueries({ queryKey: ["jobs", "me", companyId] });
           setTitle("");
           setCapacity("3");
           setDecaySeconds("300");
-          force();
           toast.success(`Created "${job.title}"`);
         },
         onError: (err) =>
@@ -89,7 +97,7 @@ export default function CompanyDashboard() {
           <Card className="animate-pulse">
             <CardHeader className="h-24 bg-muted/50 rounded-t-lg" />
           </Card>
-        ) : myJobs.length === 0 ? (
+        ) : (myJobs || []).length === 0 ? (
           <Card className="border-dashed bg-muted/10">
             <CardContent className="flex flex-col items-center justify-center py-16 text-center">
               <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center text-muted-foreground mb-4">
@@ -104,7 +112,7 @@ export default function CompanyDashboard() {
           </Card>
         ) : (
           <div className="grid gap-4">
-            {myJobs.map((job) => (
+            {(myJobs || []).map((job) => (
               <Link key={job.id} href={`/jobs/${job.id}`} className="block group">
                 <Card className="transition-all hover:shadow-md hover:border-primary/30">
                   <CardContent className="p-6 flex items-center justify-between">

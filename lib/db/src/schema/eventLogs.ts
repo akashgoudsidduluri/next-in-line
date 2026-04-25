@@ -31,6 +31,7 @@ export const eventLogsTable = pgTable(
     eventType: text("event_type").notNull().$type<EventType>(),
     metadata: jsonb("metadata").notNull().default({}),
     schemaVersion: text("schema_version").notNull().default("v1"),
+    correlationId: text("correlation_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

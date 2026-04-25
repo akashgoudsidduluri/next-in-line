@@ -51,11 +51,12 @@ export default defineConfig({
     fs: {
       strict: true,
     },
-    // Proxy API calls to the Express backend so auth-api.ts bare paths work.
+    // Proxy API calls to the Express backend (v1)
     proxy: {
       "/api": {
         target: `http://localhost:${apiPort}`,
         changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, "/api/v1"),
       },
     },
   },

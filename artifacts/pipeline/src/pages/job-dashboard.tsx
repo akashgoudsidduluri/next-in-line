@@ -219,36 +219,96 @@ export default function JobDashboard() {
           </CardContent>
         </Card>
 
-        <Card className="lg:col-span-2">
+        <Card className="lg:col-span-2 shadow-sm">
           <CardHeader className="border-b bg-muted/5 pb-3">
-            <CardTitle className="text-base">Event log</CardTitle>
-            <CardDescription>State transitions in real time.</CardDescription>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Activity size={16} className="text-primary" />
+              Event log
+            </CardTitle>
+            <CardDescription>Real-time pipeline state transitions.</CardDescription>
           </CardHeader>
           <CardContent className="p-0">
             {recentEvents.length === 0 ? (
-              <div className="p-6 text-center text-sm text-muted-foreground">No events yet.</div>
+              <div className="p-12 text-center text-sm text-muted-foreground italic">
+                No pipeline activity recorded yet.
+              </div>
             ) : (
-              <div className="divide-y max-h-[320px] overflow-y-auto">
-                {recentEvents.map((event) => (
-                  <div key={event.id} className="p-4 flex gap-4 text-sm">
-                    <div className="text-muted-foreground text-xs font-mono whitespace-nowrap mt-0.5">
-                      {format(new Date(event.createdAt), "HH:mm:ss")}
-                    </div>
-                    <div>
-                      <div className="font-medium flex items-center gap-2">
-                        {event.eventType}
-                        <span className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded text-muted-foreground">
-                          {event.applicationId.substring(0, 8)}
-                        </span>
-                      </div>
-                      {event.metadata && Object.keys(event.metadata).length > 0 && (
-                        <div className="mt-1 text-xs text-muted-foreground font-mono bg-muted/30 p-2 rounded">
-                          {JSON.stringify(event.metadata)}
+              <div className="p-6 max-h-[400px] overflow-y-auto">
+                <div className="relative space-y-6 before:absolute before:inset-0 before:ml-5 before:-translate-x-px before:h-full before:w-0.5 before:bg-gradient-to-b before:from-transparent before:via-slate-200 before:to-transparent">
+                  {recentEvents.map((event) => {
+                    const isApplied = event.eventType === "APPLIED";
+                    const isPromoted = event.eventType === "PROMOTED";
+                    const isAck = event.eventType === "ACKNOWLEDGED";
+                    const isDecayed = event.eventType === "DECAYED";
+                    const isExited = event.eventType === "EXITED";
+
+                    return (
+                      <div key={event.id} className="relative flex items-start gap-4 group">
+                        <div className={`
+                          flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-4 border-background shadow-sm z-10
+                          ${isApplied ? "bg-blue-500 text-white" : ""}
+                          ${isPromoted ? "bg-green-500 text-white" : ""}
+                          ${isAck ? "bg-emerald-600 text-white" : ""}
+                          ${isDecayed ? "bg-amber-500 text-white" : ""}
+                          ${isExited ? "bg-red-500 text-white" : ""}
+                        `}>
+                          {isApplied && <Activity size={14} />}
+                          {isPromoted && <Clock size={14} />}
+                          {isAck && <Activity size={14} />}
+                          {isDecayed && <AlertTriangle size={14} />}
+                          {isExited && <AlertTriangle size={14} />}
                         </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                        <div className="flex flex-col gap-1 pt-1 flex-grow">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className={`font-semibold text-sm
+                                ${isApplied ? "text-blue-700" : ""}
+                                ${isPromoted ? "text-green-700" : ""}
+                                ${isAck ? "text-emerald-700" : ""}
+                                ${isDecayed ? "text-amber-700" : ""}
+                                ${isExited ? "text-red-700" : ""}
+                              `}>
+                                {event.eventType}
+                              </span>
+                              <Badge variant="outline" className="font-mono text-[10px] py-0 h-4 px-1.5 opacity-60">
+                                {event.applicationId.substring(0, 8)}
+                              </Badge>
+                            </div>
+                            <time className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                              {format(new Date(event.createdAt), "HH:mm:ss")}
+                            </time>
+                          </div>
+                          
+                          <div className="text-sm text-muted-foreground leading-relaxed">
+                            {isApplied && (
+                              <span>Applicant joined the pipeline as <strong className="text-foreground">{String(event.metadata.admittedAs ?? "unknown")}</strong>.</span>
+                            )}
+                            {isPromoted && (
+                              <span>Promoted to <strong className="text-green-600">ACTIVE</strong> due to <span className="italic">{String(event.metadata.reason ?? "unknown").toLowerCase().replace("_", " ")}</span>.</span>
+                            )}
+                            {isAck && (
+                              <span>Applicant <strong className="text-emerald-600">ACKNOWLEDGED</strong> their spot in the active cohort.</span>
+                            )}
+                            {isDecayed && (
+                              <span>Acknowledge window expired. Applicant <strong className="text-amber-600">DECAYED</strong> to waitlist position <span className="font-bold">#{String(event.metadata.newQueuePosition ?? "?")}</span>.</span>
+                            )}
+                            {isExited && (
+                              <span>Applicant <strong className="text-red-600">EXITED</strong> the pipeline.</span>
+                            )}
+                          </div>
+
+                          {event.metadata.decayCount !== undefined && (
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <Badge variant="secondary" className="text-[9px] h-4 bg-red-50 text-red-600 border-red-100 uppercase tracking-tighter">
+                                Decay ×{String(event.metadata.decayCount)}
+                              </Badge>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </CardContent>

@@ -6,13 +6,14 @@ import {
   getApplicationStatus,
   applyAsRegisteredApplicant,
   applicationBelongsToApplicant,
+  getMyApplications,
 } from "../services/queueEngine";
 import { requireApplicant, getApplicantAuth } from "../auth/middleware";
 import { ForbiddenError, NotFoundError } from "../lib/errors";
 
-const router: IRouter = Router();
+export const applicationsRouter: IRouter = Router();
 
-router.post("/jobs/:jobId/apply", requireApplicant, async (req, res, next) => {
+applicationsRouter.post("/jobs/:jobId/apply", requireApplicant, async (req, res, next) => {
   try {
     const { jobId } = JobIdParams.parse(req.params);
     const auth = getApplicantAuth(req);
@@ -28,15 +29,22 @@ router.post("/jobs/:jobId/apply", requireApplicant, async (req, res, next) => {
   }
 });
 
-router.get(
+/** Applicant — list only MY current applications with status. */
+applicationsRouter.get("/applications/me", requireApplicant, async (req, res, next) => {
+  try {
+    const auth = getApplicantAuth(req);
+    const apps = await getMyApplications(auth.applicantId);
+    res.json(apps);
+  } catch (err) {
+    next(err);
+  }
+});
+
+applicationsRouter.get(
   "/applications/:applicationId",
-  requireApplicant,
   async (req, res, next) => {
     try {
-    const { applicationId: id } = ApplicationIdParams.parse(req.params);
-    const auth = getApplicantAuth(req);
-    const owns = await applicationBelongsToApplicant(id, auth.applicantId);
-      if (!owns) throw new ForbiddenError("Not your application");
+      const { applicationId: id } = ApplicationIdParams.parse(req.params);
       const status = await getApplicationStatus(id);
       if (!status) throw new NotFoundError("Application not found");
       res.json(status);
@@ -46,7 +54,7 @@ router.get(
   },
 );
 
-router.post(
+applicationsRouter.post(
   "/applications/:applicationId/acknowledge",
   requireApplicant,
   async (req, res, next) => {
@@ -65,7 +73,7 @@ router.post(
   },
 );
 
-router.post(
+applicationsRouter.post(
   "/applications/:applicationId/exit",
   requireApplicant,
   async (req, res, next) => {
@@ -84,4 +92,4 @@ router.post(
   },
 );
 
-export default router;
+export default applicationsRouter;

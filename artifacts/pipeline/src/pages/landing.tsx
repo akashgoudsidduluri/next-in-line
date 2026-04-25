@@ -66,17 +66,54 @@ export default function Landing() {
                 offers before they decay.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <Link href="/applicant/login">
-                <Button className="w-full" size="lg">
-                  Sign in as applicant <ArrowRight size={16} className="ml-2" />
-                </Button>
-              </Link>
-              <Link href="/applicant/register">
-                <Button variant="outline" className="w-full" size="sm">
-                  Create an applicant account
-                </Button>
-              </Link>
+            <CardContent className="space-y-6">
+              <div className="space-y-3">
+                <Link href="/applicant/login">
+                  <Button className="w-full" size="lg">
+                    Sign in as applicant <ArrowRight size={16} className="ml-2" />
+                  </Button>
+                </Link>
+                <Link href="/applicant/register">
+                  <Button variant="outline" className="w-full" size="sm">
+                    Create an applicant account
+                  </Button>
+                </Link>
+              </div>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t" />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-background px-2 text-muted-foreground">
+                    Or check status
+                  </span>
+                </div>
+              </div>
+
+              <form 
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const id = (e.currentTarget.elements.namedItem("appId") as HTMLInputElement).value;
+                  if (id) setLocation(`/apply/${id}`);
+                }}
+                className="space-y-2"
+              >
+                <div className="flex gap-2">
+                  <input
+                    name="appId"
+                    placeholder="Enter Application ID"
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    required
+                  />
+                  <Button type="submit" size="sm" variant="secondary">
+                    Check
+                  </Button>
+                </div>
+                <p className="text-[10px] text-muted-foreground text-center">
+                  Look up your numerical position in the queue.
+                </p>
+              </form>
             </CardContent>
           </Card>
         </div>

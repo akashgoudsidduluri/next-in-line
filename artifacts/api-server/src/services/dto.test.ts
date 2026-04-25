@@ -100,6 +100,8 @@ describe("DTO Mappers", () => {
         jobId: "job-789",
         eventType: "PROMOTED",
         metadata: { reason: "INITIAL_ADMISSION" },
+        schemaVersion: "1.0",
+        correlationId: null,
         createdAt: mockDate,
       };
       const dto = toEventLogDto(mockEvent);
@@ -120,6 +122,8 @@ describe("DTO Mappers", () => {
         jobId: "job-789",
         eventType: "APPLIED",
         metadata: null,
+        schemaVersion: "1.0",
+        correlationId: null,
         createdAt: mockDate,
       };
       const dto = toEventLogDto(mockEventWithoutMeta);

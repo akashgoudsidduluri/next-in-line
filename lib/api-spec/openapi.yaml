@@ -5,11 +5,13 @@ info:
   version: 0.1.0
   description: Hiring pipeline API — state-machine queue with capacity, decay, and event sourcing.
 servers:
-  - url: /api
-    description: Base API path
+  - url: /api/v1
+    description: Base API path (v1)
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication for companies and applicants
   - name: jobs
     description: Job postings
   - name: applications
@@ -29,6 +31,82 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /company/auth/register:
+    post:
+      operationId: registerCompany
+      tags: [auth]
+      summary: Create a new company account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterCompanyBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /company/auth/login:
+    post:
+      operationId: loginCompany
+      tags: [auth]
+      summary: Login to company account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginBody"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /applicant/auth/register:
+    post:
+      operationId: registerApplicant
+      tags: [auth]
+      summary: Create a new applicant account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterApplicantBody"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+
+  /applicant/auth/login:
+    post:
+      operationId: loginApplicant
+      tags: [auth]
+      summary: Login to applicant account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginBody"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
 
   /jobs:
     get:
@@ -192,6 +270,73 @@ components:
         status:
           type: string
       required: [status]
+
+    AuthResponse:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+        company:
+          $ref: "#/components/schemas/Company"
+        applicant:
+          $ref: "#/components/schemas/Applicant"
+
+    LoginBody:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    RegisterCompanyBody:
+      type: object
+      required: [name, email, password]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    RegisterApplicantBody:
+      type: object
+      required: [name, email, password]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    Company:
+      type: object
+      required: [id, name, email]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
+
+    Applicant:
+      type: object
+      required: [id, name, email]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        email:
+          type: string
 
     ApplicationState:
       type: string

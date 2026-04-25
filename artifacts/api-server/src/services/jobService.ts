@@ -14,7 +14,16 @@ export interface JobWithCounts {
   waitlistCount: number;
 }
 
-export async function listJobsWithCounts(): Promise<JobWithCounts[]> {
+export interface ListJobsOptions {
+  companyId?: string;
+  title?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function listJobsWithCounts(options: ListJobsOptions = {}): Promise<JobWithCounts[]> {
+  const { companyId, title, limit = 50, offset = 0 } = options;
+
   const rows = await db.execute<{
     id: string;
     title: string;
@@ -29,10 +38,15 @@ export async function listJobsWithCounts(): Promise<JobWithCounts[]> {
       COALESCE(SUM(CASE WHEN a.state = 'WAITLISTED' THEN 1 ELSE 0 END), 0)::text AS waitlist_count
     FROM jobs j
     LEFT JOIN applications a ON a.job_id = j.id
+    WHERE 
+      (${companyId ? sql`j.company_id = ${companyId}` : sql`TRUE`})
+      AND (${title ? sql`j.title ILIKE ${"%" + title + "%"}` : sql`TRUE`})
     GROUP BY j.id
     ORDER BY j.created_at DESC
+    LIMIT ${limit}
+    OFFSET ${offset}
   `);
-
+  logger.debug({ companyId, rowCount: rows.rows.length }, "Listed jobs with counts");
   return rows.rows.map((r) => ({
     id: r.id,
     title: r.title,

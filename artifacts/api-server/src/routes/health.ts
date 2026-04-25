@@ -3,13 +3,13 @@ import { HealthCheckResponse } from "@workspace/api-zod";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
-const router: IRouter = Router();
+export const healthRouter: IRouter = Router();
 
 /**
  * Healthz endpoint with live DB connectivity check.
  * Elite engineering standard for high-fidelity observability.
  */
-router.get("/healthz", async (_req, res) => {
+healthRouter.get("/healthz", async (_req, res) => {
   let dbStatus = "ok";
   try {
     // Simple 1ms check to verify the connection pool and DB responsiveness
@@ -33,4 +33,4 @@ router.get("/healthz", async (_req, res) => {
   });
 });
 
-export default router;
+export default healthRouter;

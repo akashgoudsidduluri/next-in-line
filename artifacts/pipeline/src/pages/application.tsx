@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useParams } from "wouter";
+import { useParams, Link } from "wouter";
 import { 
   useGetApplicationStatus, 
   getGetApplicationStatusQueryKey,
@@ -18,7 +18,8 @@ import {
   DoorOpen, 
   ListOrdered, 
   Activity,
-  AlertTriangle
+  AlertTriangle,
+  ArrowLeft
 } from "lucide-react";
 
 function BigCountdown({ deadline, onExpire }: { deadline: string, onExpire?: () => void }) {
@@ -133,10 +134,15 @@ export default function ApplicantView() {
     <div className="min-h-[100dvh] bg-slate-50 flex items-center justify-center p-4 sm:p-6">
       <div className="max-w-xl w-full">
         
-        <div className="mb-8 text-center space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Applicant Portal</h1>
-          <p className="text-sm text-slate-500 font-mono bg-slate-200/50 inline-block px-3 py-1 rounded-full">
-            ID: {status.id}
+        <div className="mb-8 flex items-center justify-between">
+          <Link href="/applicant">
+            <Button variant="ghost" size="sm" className="gap-2 text-slate-500 hover:text-slate-900">
+              <ArrowLeft size={16} />
+              Back to dashboard
+            </Button>
+          </Link>
+          <p className="text-sm text-slate-500 font-mono bg-slate-200/50 px-3 py-1 rounded-full">
+            ID: {status.id.substring(0, 8)}
           </p>
         </div>
 

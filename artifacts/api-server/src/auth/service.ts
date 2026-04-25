@@ -15,6 +15,8 @@ import {
 import { ConflictError, UnauthorizedError, BadRequestError, HttpError } from "../lib/errors";
 import { logger } from "../lib/logger";
 
+import { withTransaction } from "../lib/transaction";
+
 const BCRYPT_COST = 10;
 
 function normaliseEmail(email: string): string {
@@ -34,26 +36,29 @@ export async function registerCompany(input: {
     throw new BadRequestError("Password must be at least 8 characters");
   }
   const email = normaliseEmail(input.email);
-  const existing = await db
-    .select()
-    .from(companiesTable)
-    .where(eq(companiesTable.email, email))
-    .limit(1);
-  
-  if (existing[0]) {
-    logger.warn({ email }, "Company registration failed: email conflict");
-    throw new ConflictError("Email already registered");
-  }
 
-  logger.info({ email, name: input.name }, "Attempting company registration");
+  return withTransaction(async (tx) => {
+    const existing = await tx
+      .select()
+      .from(companiesTable)
+      .where(eq(companiesTable.email, email))
+      .limit(1);
+    
+    if (existing[0]) {
+      logger.warn({ email }, "Company registration failed: email conflict");
+      throw new ConflictError("Email already registered");
+    }
 
-  const passwordHash = await bcrypt.hash(input.password, BCRYPT_COST);
-  const [created] = await db
-    .insert(companiesTable)
-    .values({ name: input.name.trim(), email, passwordHash })
-    .returning();
-  if (!created) throw new HttpError(500, "DATABASE_ERROR", "Failed to create company");
-  return created;
+    logger.info({ email, name: input.name }, "Attempting company registration");
+
+    const passwordHash = await bcrypt.hash(input.password, BCRYPT_COST);
+    const [created] = await tx
+      .insert(companiesTable)
+      .values({ name: input.name.trim(), email, passwordHash })
+      .returning();
+    if (!created) throw new HttpError(500, "DATABASE_ERROR", "Failed to create company");
+    return created;
+  }, "register-company");
 }
 
 export async function loginCompany(input: {
@@ -90,26 +95,29 @@ export async function registerApplicant(input: {
     throw new BadRequestError("Password must be at least 8 characters");
   }
   const email = normaliseEmail(input.email);
-  const existing = await db
-    .select()
-    .from(applicantsTable)
-    .where(eq(applicantsTable.email, email))
-    .limit(1);
-  
-  if (existing[0]) {
-    logger.warn({ email }, "Applicant registration failed: email conflict");
-    throw new ConflictError("Email already registered");
-  }
 
-  logger.info({ email, name: input.name }, "Attempting applicant registration");
+  return withTransaction(async (tx) => {
+    const existing = await tx
+      .select()
+      .from(applicantsTable)
+      .where(eq(applicantsTable.email, email))
+      .limit(1);
+    
+    if (existing[0]) {
+      logger.warn({ email }, "Applicant registration failed: email conflict");
+      throw new ConflictError("Email already registered");
+    }
 
-  const passwordHash = await bcrypt.hash(input.password, BCRYPT_COST);
-  const [created] = await db
-    .insert(applicantsTable)
-    .values({ name: input.name.trim(), email, passwordHash })
-    .returning();
-  if (!created) throw new HttpError(500, "DATABASE_ERROR", "Failed to create applicant");
-  return created;
+    logger.info({ email, name: input.name }, "Attempting applicant registration");
+
+    const passwordHash = await bcrypt.hash(input.password, BCRYPT_COST);
+    const [created] = await tx
+      .insert(applicantsTable)
+      .values({ name: input.name.trim(), email, passwordHash })
+      .returning();
+    if (!created) throw new HttpError(500, "DATABASE_ERROR", "Failed to create applicant");
+    return created;
+  }, "register-applicant");
 }
 
 export async function loginApplicant(input: {

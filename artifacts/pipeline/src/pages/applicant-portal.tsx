@@ -3,10 +3,8 @@ import { Link } from "wouter";
 import {
   useListJobs,
   useApplyToJob,
-  getListJobsQueryKey,
-  getGetApplicationStatusQueryKey,
 } from "@workspace/api-client-react";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Card,
   CardContent,
@@ -20,11 +18,15 @@ import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { ArrowRight, Briefcase, ListChecks } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import {
-  getMyApplicationIds,
-  rememberMyApplication,
-} from "@/lib/local-tracking";
 
+/**
+ * Applicant Portal
+ * 
+ * State Reflection Strategy:
+ * - Opportunistic Polling: Active applications are refetched every 5s to reflect waitlist movement.
+ * - Simplicity over Complexity: Polling ensures that applicants see their 'queue position' decay 
+ *   near-real-time without the overhead of maintaining a persistent WebSocket connection.
+ */
 export default function ApplicantPortal() {
   const { auth } = useAuth();
   const applicantId = auth?.role === "applicant" ? auth.applicant.id : "";
@@ -32,35 +34,25 @@ export default function ApplicantPortal() {
   const applicantEmail = auth?.role === "applicant" ? auth.applicant.email : "";
   const queryClient = useQueryClient();
 
+  // List all MY applications using the ownership-based endpoint
+  const { data: liveApps = [], isLoading: appsLoading } = useQuery({
+    queryKey: ["applications", "me", applicantId],
+    queryFn: async () => {
+      const res = await fetch("/api/applications/me", {
+        headers: auth ? { Authorization: `Bearer ${auth.token}` } : {},
+      });
+      if (!res.ok) throw new Error("Failed to fetch applications");
+      return res.json();
+    },
+    refetchInterval: 5000,
+  });
+
   const { data: jobs, isLoading: jobsLoading } = useListJobs({
-    query: { queryKey: getListJobsQueryKey(), refetchInterval: 3000 },
+    query: { 
+      queryKey: ["jobs", "public"], 
+      refetchInterval: 10000 
+    },
   });
-
-  const myAppIds = getMyApplicationIds(applicantId);
-
-  const myApps = useQueries({
-    queries: myAppIds.map((id) => ({
-      queryKey: getGetApplicationStatusQueryKey(id),
-      queryFn: async () => {
-        const res = await fetch(`/api/applications/${id}`, {
-          headers: auth ? { Authorization: `Bearer ${auth.token}` } : {},
-        });
-        if (!res.ok) return null;
-        return res.json();
-      },
-      refetchInterval: 2000,
-    })),
-  });
-
-  const apply = useApplyToJob();
-
-  const liveApps = useMemo(
-    () =>
-      myApps
-        .map((q, i) => ({ id: myAppIds[i]!, data: q.data as any }))
-        .filter((x) => x.data),
-    [myApps, myAppIds],
-  );
 
   const jobTitleById = useMemo(() => {
     const m = new Map<string, string>();
@@ -69,19 +61,21 @@ export default function ApplicantPortal() {
   }, [jobs]);
 
   const appliedJobIds = useMemo(
-    () => new Set(liveApps.filter((a) => a.data?.state !== "EXITED").map((a) => a.data.jobId)),
+    () => new Set(liveApps.filter((a: any) => a.state !== "EXITED").map((a: any) => a.jobId)),
     [liveApps],
   );
 
+  const apply = useApplyToJob();
+
   const handleApply = (jobId: string, jobTitle: string) => {
-    // The backend ignores the body and uses the applicantId from the token,
-    // but the generated request type still requires {name, email}.
     apply.mutate(
       { jobId, data: { name: applicantName, email: applicantEmail } },
       {
         onSuccess: (app) => {
-          rememberMyApplication(applicantId, app.id);
-          queryClient.invalidateQueries({ queryKey: getListJobsQueryKey() });
+          // Force immediate refetch to synchronize UI state
+          queryClient.invalidateQueries({ queryKey: ["applications", "me", applicantId] });
+          queryClient.invalidateQueries({ queryKey: ["jobs", "public"] });
+          
           toast.success(`Applied to ${jobTitle}`, {
             description: `You are ${app.state === "ACTIVE" ? "ACTIVE — please acknowledge!" : `#${app.queuePosition} on the waitlist`}.`,
           });
@@ -104,39 +98,39 @@ export default function ApplicantPortal() {
         {liveApps.length === 0 ? (
           <Card className="border-dashed bg-muted/10">
             <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              No applications yet. Browse open jobs below to get started.
+              {appsLoading ? "Loading applications..." : "No applications yet. Browse open jobs below to get started."}
             </CardContent>
           </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {liveApps.map(({ id, data }) => (
-              <Link key={id} href={`/apply/${id}`} className="block group">
+            {liveApps.map((app: any) => (
+              <Link key={app.id} href={`/apply/${app.id}`} className="block group">
                 <Card className="transition-all hover:shadow-md hover:border-primary/30">
                   <CardContent className="p-5 flex items-center justify-between">
                     <div className="space-y-1">
                       <div className="font-medium group-hover:text-primary">
-                        {jobTitleById.get(data.jobId) ?? "Application"}
+                        {jobTitleById.get(app.jobId) ?? "Application"}
                       </div>
                       <div className="text-xs text-muted-foreground font-mono">
-                        {id.substring(0, 8)}
+                        {app.id.substring(0, 8)}
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-1">
                       <Badge
                         variant="outline"
                         className={
-                          data.state === "ACTIVE"
+                          app.state === "ACTIVE"
                             ? "border-primary/30 text-primary bg-primary/5"
-                            : data.state === "WAITLISTED"
+                            : app.state === "WAITLISTED"
                               ? "border-amber-300 text-amber-700 bg-amber-50"
                               : "border-slate-200 text-slate-500"
                         }
                       >
-                        {data.state}
+                        {app.state}
                       </Badge>
-                      {data.state === "WAITLISTED" && (
+                      {app.state === "WAITLISTED" && (
                         <span className="text-xs text-muted-foreground">
-                          #{data.queuePosition}
+                          #{app.queuePosition}
                         </span>
                       )}
                     </div>
@@ -187,16 +181,18 @@ export default function ApplicantPortal() {
                   <CardContent>
                     <Button
                       onClick={() => handleApply(job.id, job.title)}
-                      disabled={already || apply.isPending}
+                      disabled={already || (apply.isPending && apply.variables?.jobId === job.id)}
                       className="w-full"
                       variant={already ? "outline" : "default"}
                     >
                       {already
                         ? "Already applied"
-                        : full
-                          ? "Apply (joins waitlist)"
-                          : "Apply"}
-                      {!already && <ArrowRight size={14} className="ml-2" />}
+                        : apply.isPending && apply.variables?.jobId === job.id
+                          ? "Applying..."
+                          : full
+                            ? "Apply (joins waitlist)"
+                            : "Apply"}
+                      {!already && !(apply.isPending && apply.variables?.jobId === job.id) && <ArrowRight size={14} className="ml-2" />}
                     </Button>
                   </CardContent>
                 </Card>
