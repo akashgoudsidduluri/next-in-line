@@ -427,20 +427,28 @@ export async function decayActiveApplication(
     if (!app) return false;
     const job = await lockJob(tx, app.jobId);
 
-    // Re-check after lock — they may have ack'd in between.
+    // Re-read application state AFTER acquiring the lock to ensure we are acting on fresh data.
+    const currentRows = await tx
+      .select()
+      .from(applicationsTable)
+      .where(eq(applicationsTable.id, applicationId))
+      .limit(1);
+    const currentApp = currentRows[0];
+    
     if (
-      app.state !== "ACTIVE" ||
-      app.acknowledgedAt != null ||
-      app.ackDeadline == null ||
-      app.ackDeadline.getTime() > Date.now()
+      !currentApp ||
+      currentApp.state !== "ACTIVE" ||
+      currentApp.acknowledgedAt != null ||
+      currentApp.ackDeadline == null ||
+      currentApp.ackDeadline.getTime() > Date.now()
     ) {
-      logger.debug({ applicationId, state: app.state, ackAt: app.acknowledgedAt }, "Decay aborted: application state no longer eligible");
+      logger.debug({ applicationId, state: currentApp?.state, ackAt: currentApp?.acknowledgedAt }, "Decay aborted: application state no longer eligible");
       return false;
     }
 
-    const maxPos = await maxQueuePosition(tx, app.jobId);
+    const maxPos = await maxQueuePosition(tx, currentApp.jobId);
     const newPos = maxPos + 1;
-    logger.info({ applicationId, jobId: app.jobId, newPos }, "Processing application decay");
+    logger.info({ applicationId, jobId: currentApp.jobId, newPos }, "Processing application decay");
 
     const [decayed] = await tx
       .update(applicationsTable)
@@ -449,7 +457,7 @@ export async function decayActiveApplication(
         queuePosition: newPos,
         ackDeadline: null,
         acknowledgedAt: null,
-        decayCount: app.decayCount + 1,
+        decayCount: currentApp.decayCount + 1,
         updatedAt: new Date(),
       })
       .where(eq(applicationsTable.id, applicationId))

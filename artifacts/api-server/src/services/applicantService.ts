@@ -6,11 +6,10 @@
  */
 
 import { eq } from "drizzle-orm";
-import { db, applicantsTable, jobsTable, type Applicant } from "@workspace/db";
+import { db, applicantsTable, type Applicant } from "@workspace/db";
 import { NotFoundError } from "../lib/errors";
 import { withTransaction } from "../lib/transaction";
 import { logger } from "../lib/logger";
-import { toJobDto } from "./dto";
 
 export async function findOrCreateApplicant(input: {
   name: string;

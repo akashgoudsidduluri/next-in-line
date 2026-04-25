@@ -29,11 +29,9 @@ export async function resetDb(): Promise<boolean> {
     return false;
   }
 
-  await db.execute(sql`DELETE FROM event_logs`);
-  await db.execute(sql`DELETE FROM applications`);
-  await db.execute(sql`DELETE FROM applicants`);
-  await db.execute(sql`DELETE FROM jobs`);
-  await db.execute(sql`DELETE FROM companies`);
+  // Using TRUNCATE CASCADE for significantly faster resets in the test environment.
+  // This cleanly wipes all tables in a single operation, bypassing row-level locks.
+  await db.execute(sql`TRUNCATE TABLE companies, jobs, applicants, applications, event_logs CASCADE`);
   return true;
 }
 

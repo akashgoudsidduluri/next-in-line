@@ -37,16 +37,18 @@ function MenubarSub({
 const Menubar = React.forwardRef<
   React.ElementRef<typeof MenubarPrimitive.Root>,
   React.ComponentPropsWithoutRef<typeof MenubarPrimitive.Root>
->(({ className, ...props }, ref) => (
-  <MenubarPrimitive.Root
-    ref={ref}
-    className={cn(
-      "flex h-9 items-center space-x-1 rounded-md border bg-background p-1 shadow-sm",
-      className
-    )}
-    {...props}
-  />
-))
+>(function Menubar({ className, ...props }, ref) {
+  return (
+    <MenubarPrimitive.Root
+      ref={ref}
+      className={cn(
+        "flex h-9 items-center space-x-1 rounded-md border bg-background p-1 shadow-sm",
+        className
+      )}
+      {...props}
+    />
+  )
+})
 Menubar.displayName = MenubarPrimitive.Root.displayName
 
 const MenubarTrigger = React.forwardRef<

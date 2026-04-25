@@ -23,13 +23,25 @@ healthRouter.get("/healthz", async (_req, res) => {
   if (dbStatus === "error") {
     return res.status(503).json({
       status: "error",
-      checks: { database: "error" }
+      checks: { database: "error", memory: "ok" },
+      uptime: process.uptime(),
     });
   }
 
+  const memoryUsage = process.memoryUsage();
+  const memoryStatus = memoryUsage.heapUsed / memoryUsage.heapTotal > 0.9 ? "warning" : "ok";
+
   return res.json({
     ...data,
-    checks: { database: "ok" }
+    checks: { 
+      database: "ok",
+      memory: memoryStatus,
+    },
+    uptime: process.uptime(),
+    memory: {
+      usedMB: Math.round(memoryUsage.heapUsed / 1024 / 1024),
+      totalMB: Math.round(memoryUsage.heapTotal / 1024 / 1024),
+    }
   });
 });
 

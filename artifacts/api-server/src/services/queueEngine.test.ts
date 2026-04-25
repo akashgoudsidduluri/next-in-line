@@ -189,7 +189,8 @@ describe("QueueEngine Core", () => {
         const op = Math.floor(Math.random() * 3);
         if (op === 0 || apps.length === 0) {
           // APPLY
-          const res = await applyToJob({ jobId, applicantId: `applicant-${i}` });
+          const applicant = await findOrCreateApplicant({ name: `Applicant ${i}`, email: `stress-${i}@example.com` });
+          const res = await applyToJob({ jobId, applicantId: applicant.id });
           apps.push(res.id);
         } else if (op === 1) {
           // ACK or EXIT (randomly)
