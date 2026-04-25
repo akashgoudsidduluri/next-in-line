@@ -7,6 +7,8 @@
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 
+import { logger } from "../lib/logger";
+
 let dbAvailable: boolean | null = null;
 
 export async function resetDb(): Promise<boolean> {
@@ -18,9 +20,10 @@ export async function resetDb(): Promise<boolean> {
     dbAvailable = true;
   } catch (err: any) {
     if (dbAvailable === null) {
-      console.warn("\n⚠️  [TEST] Database not reachable. Skipping DB-backed integration tests.");
-      console.warn(`   Target: ${process.env.DATABASE_URL || "localhost:5432"}`);
-      console.warn(`   Error:  ${err.message}\n`);
+      logger.warn({ 
+        target: process.env.DATABASE_URL || "localhost:5432",
+        error: err.message
+      }, "Database not reachable. Skipping DB-backed integration tests.");
     }
     dbAvailable = false;
     return false;

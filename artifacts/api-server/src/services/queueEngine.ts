@@ -32,8 +32,10 @@ import {
 import { NotFoundError, ConflictError, DatabaseInsertError, DatabaseUpdateError } from "../lib/errors";
 import { logger } from "../lib/logger";
 import { toDashboardDto, type DashboardDto, toApplicationDto, type ApplicationDto, toApplicationStatusDto, type ApplicationStatusDto } from "./dto";
+import { withTransaction } from "../lib/transaction";
+import { type PgTransaction } from "drizzle-orm/pg-core";
 
-type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type Tx = PgTransaction<any, any, any>;
 
 
 
@@ -77,10 +79,11 @@ async function countActive(tx: Tx, jobId: string): Promise<number> {
 }
 
 async function maxQueuePosition(tx: Tx, jobId: string): Promise<number> {
-  const rows = await tx.execute<{ m: number | null }>(
+  const result = await tx.execute(
     sql`SELECT COALESCE(MAX(queue_position), 0) AS m FROM applications WHERE job_id = ${jobId} AND state = 'WAITLISTED'`,
   );
-  return Number(rows.rows[0]?.m ?? 0);
+  const rows = result.rows as unknown as { m: number | null }[];
+  return Number(rows[0]?.m ?? 0);
 }
 
 async function logEvent(
@@ -95,6 +98,7 @@ async function logEvent(
     jobId,
     eventType,
     metadata: metadata as never,
+    schemaVersion: "v1",
   });
 }
 
@@ -223,7 +227,7 @@ export interface ApplyInput {
  * - Return: Mapped ApplicationDto.
  */
 export async function applyToJob(input: ApplyInput): Promise<ApplicationDto> {
-  return db.transaction(async (tx) => {
+  return withTransaction(async (tx) => {
     const job = await lockJob(tx, input.jobId);
     const active = await countActive(tx, input.jobId);
 
@@ -279,7 +283,7 @@ export async function updateJob(
   jobId: string,
   input: { capacity?: number; decaySeconds?: number },
 ): Promise<number> {
-  return db.transaction(async (tx) => {
+  return withTransaction(async (tx) => {
     const job = await lockJob(tx, jobId);
 
     await tx
@@ -312,7 +316,7 @@ export async function updateJob(
 export async function acknowledgeApplication(
   applicationId: string,
 ): Promise<ApplicationDto> {
-  return db.transaction(async (tx) => {
+  return withTransaction(async (tx) => {
     const existing = await tx
       .select()
       .from(applicationsTable)
@@ -346,7 +350,7 @@ export async function acknowledgeApplication(
 export async function exitApplication(
   applicationId: string,
 ): Promise<{ application: ApplicationDto; promoted: number }> {
-  return db.transaction(async (tx) => {
+  return withTransaction(async (tx) => {
     const existing = await tx
       .select()
       .from(applicationsTable)
@@ -410,7 +414,7 @@ export async function exitApplication(
 export async function decayActiveApplication(
   applicationId: string,
 ): Promise<boolean> {
-  return db.transaction(async (tx) => {
+  return withTransaction(async (tx) => {
     const existing = await tx
       .select()
       .from(applicationsTable)
@@ -529,5 +533,87 @@ export async function getJobDashboard(jobId: string): Promise<DashboardDto | nul
   ]);
 
   return toDashboardDto(jobRow[0], active, waitlist, recentEvents);
+}
+
+/* ─────────────────────────  OWNERSHIP & AUTH HELPERS  ───────────────────────── */
+
+/** Look up the email of the auth'd applicant for ownership checks. */
+export async function getApplicantEmail(applicantId: string): Promise<string | null> {
+  const rows = await db
+    .select({ email: applicantsTable.email })
+    .from(applicantsTable)
+    .where(eq(applicantsTable.id, applicantId))
+    .limit(1);
+  return rows[0]?.email ?? null;
+}
+
+/** True iff the application's applicant matches the auth'd applicant (by email). */
+export async function applicationBelongsToApplicant(
+  applicationId: string,
+  applicantId: string,
+): Promise<boolean> {
+  const email = await getApplicantEmail(applicantId);
+  if (!email) return false;
+  const result = await db.execute(sql`
+    SELECT TRUE AS ok FROM applications app
+    JOIN applicants ap ON ap.id = app.applicant_id
+    WHERE app.id = ${applicationId} AND ap.email = ${email}
+    LIMIT 1
+  `);
+  const rows = result.rows as unknown as { ok: boolean }[];
+  return Boolean(rows[0]?.ok);
+}
+
+/** True iff the job's company matches the auth'd company. */
+export async function jobBelongsToCompany(
+  jobId: string,
+  companyId: string,
+): Promise<boolean> {
+  const rows = await db
+    .select({ companyId: jobsTable.companyId })
+    .from(jobsTable)
+    .where(eq(jobsTable.id, jobId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return false;
+  return row.companyId === companyId;
+}
+
+/**
+ * Apply to a job as an already-registered applicant.
+ * Enforces duplicate check and role-based exclusivity.
+ */
+export async function applyAsRegisteredApplicant(input: {
+  jobId: string;
+  applicantId: string;
+}) {
+  return withTransaction(async (tx) => {
+    await lockJob(tx, input.jobId);
+    
+    const applicantRows = await tx
+      .select()
+      .from(applicantsTable)
+      .where(eq(applicantsTable.id, input.applicantId))
+      .limit(1);
+    const applicant = applicantRows[0];
+    if (!applicant) throw new NotFoundError("Applicant not found");
+
+    // Reject in-flight duplicate applications
+    const inFlight = await tx.execute(sql`
+      SELECT app.id FROM applications app
+      JOIN applicants ap ON ap.id = app.applicant_id
+      WHERE app.job_id = ${input.jobId}
+        AND ap.email = ${applicant.email}
+        AND app.state IN ('ACTIVE', 'WAITLISTED')
+      LIMIT 1
+    `);
+    const inFlightRows = inFlight.rows as unknown as { id: string }[];
+    if (inFlightRows[0]) {
+      throw new ConflictError("You already have an active application for this job");
+    }
+
+    // Reuse core logic
+    return applyToJob(input);
+  });
 }
 

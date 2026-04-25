@@ -4,11 +4,9 @@ import {
   acknowledgeApplication,
   exitApplication,
   getApplicationStatus,
-} from "../services/queueEngine";
-import {
   applyAsRegisteredApplicant,
   applicationBelongsToApplicant,
-} from "../services/queueEngineExt";
+} from "../services/queueEngine";
 import { requireApplicant, getApplicantAuth } from "../auth/middleware";
 import { ForbiddenError, NotFoundError } from "../lib/errors";
 

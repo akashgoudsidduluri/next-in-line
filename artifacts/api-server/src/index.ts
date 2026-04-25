@@ -1,17 +1,13 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { startDecayLoop } from "./scheduler/decayLoop";
+import { DecayScheduler } from "./scheduler/decayLoop";
 import { config } from "./lib/config";
 
 const port = config.port;
+const scheduler = new DecayScheduler();
 
-startDecayLoop();
+scheduler.start();
 
-app.listen(port, (err) => {
-  if (err) {
-    logger.error({ err }, "Error listening on port");
-    process.exit(1);
-  }
-
+app.listen(port, () => {
   logger.info({ port }, "Server listening");
 });

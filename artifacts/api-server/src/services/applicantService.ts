@@ -6,8 +6,11 @@
  */
 
 import { eq } from "drizzle-orm";
-import { db, applicantsTable, type Applicant } from "@workspace/db";
+import { db, applicantsTable, jobsTable, type Applicant } from "@workspace/db";
 import { NotFoundError } from "../lib/errors";
+import { withTransaction } from "../lib/transaction";
+import { logger } from "../lib/logger";
+import { toJobDto } from "./dto";
 
 export async function findOrCreateApplicant(input: {
   name: string;
@@ -15,31 +18,34 @@ export async function findOrCreateApplicant(input: {
 }): Promise<Applicant> {
   const email = input.email.trim().toLowerCase();
   
-  // 1. Check for existing applicant by email (stable identity)
-  const existing = await db
-    .select()
-    .from(applicantsTable)
-    .where(eq(applicantsTable.email, email))
-    .limit(1);
-    
-  if (existing[0]) {
-    return existing[0];
-  }
+  return withTransaction(async (tx) => {
+    // 1. Check for existing applicant by email (stable identity)
+    const existing = await tx
+      .select()
+      .from(applicantsTable)
+      .where(eq(applicantsTable.email, email))
+      .limit(1);
+      
+    if (existing[0]) {
+      return existing[0];
+    }
 
-  // 2. Create new if not found
-  const [created] = await db
-    .insert(applicantsTable)
-    .values({
-      name: input.name.trim(),
-      email,
-    })
-    .returning();
+    // 2. Create new if not found
+    logger.info({ email, name: input.name }, "Creating new applicant identity");
+    const [created] = await tx
+      .insert(applicantsTable)
+      .values({
+        name: input.name.trim(),
+        email,
+      })
+      .returning();
+      
+    if (!created) {
+      throw new Error("Failed to create applicant identity");
+    }
     
-  if (!created) {
-    throw new Error("Failed to create applicant identity");
-  }
-  
-  return created;
+    return created;
+  });
 }
 
 export async function getApplicantById(id: string): Promise<Applicant> {

@@ -30,6 +30,7 @@ export const eventLogsTable = pgTable(
       .references(() => jobsTable.id, { onDelete: "cascade" }),
     eventType: text("event_type").notNull().$type<EventType>(),
     metadata: jsonb("metadata").notNull().default({}),
+    schemaVersion: text("schema_version").notNull().default("v1"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

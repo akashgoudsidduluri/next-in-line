@@ -12,18 +12,18 @@ describe("API Integration Tests (Highest Quality)", () => {
   });
 
   describe("Public Job Feed", () => {
-    it("GET /api/jobs returns list of all jobs with counts", async () => {
+    it("GET /api/v1/jobs returns list of all jobs with counts", async () => {
       const company = await registerCompany({
         name: "Test Corp",
         email: uniqEmail("company"),
         password: "password123",
       });
       await request(app)
-        .post("/api/jobs")
+        .post("/api/v1/jobs")
         .set("Authorization", `Bearer ${signCompanyToken(company.id)}`)
         .send({ title: "Engineer", capacity: 5 });
 
-      const res = await request(app).get("/api/jobs");
+      const res = await request(app).get("/api/v1/jobs");
       expect(res.status).toBe(200);
       expect(Array.isArray(res.body)).toBe(true);
       expect(res.body[0]).toMatchObject({
@@ -35,14 +35,14 @@ describe("API Integration Tests (Highest Quality)", () => {
   });
 
   describe("Job Lifecycle (Company Auth)", () => {
-    it("POST /api/jobs enforces company authorization", async () => {
+    it("POST /api/v1/jobs enforces company authorization", async () => {
       const res = await request(app)
-        .post("/api/jobs")
+        .post("/api/v1/jobs")
         .send({ title: "No Auth", capacity: 1 });
       expect(res.status).toBe(401);
     });
 
-    it("POST /api/jobs validates complex payloads", async () => {
+    it("POST /api/v1/jobs validates complex payloads", async () => {
       const company = await registerCompany({
         name: "Test Corp",
         email: uniqEmail("company"),
@@ -51,7 +51,7 @@ describe("API Integration Tests (Highest Quality)", () => {
       const token = signCompanyToken(company.id);
 
       const res = await request(app)
-        .post("/api/jobs")
+        .post("/api/v1/jobs")
         .set("Authorization", `Bearer ${token}`)
         .send({ title: "", capacity: -1 });
       
@@ -67,13 +67,13 @@ describe("API Integration Tests (Highest Quality)", () => {
         password: "password123",
       });
       const jobRes = await request(app)
-        .post("/api/jobs")
+        .post("/api/v1/jobs")
         .set("Authorization", `Bearer ${signCompanyToken(company.id)}`)
         .send({ title: "Full Stack", capacity: 1 });
       const jobId = jobRes.body.id;
 
       const regRes = await request(app)
-        .post("/api/applicant/auth/register")
+        .post("/api/v1/applicant/auth/register")
         .send({
           name: "Alice",
           email: uniqEmail("alice"),
@@ -82,19 +82,19 @@ describe("API Integration Tests (Highest Quality)", () => {
       const applicantToken = regRes.body.token;
 
       const applyRes = await request(app)
-        .post(`/api/jobs/${jobId}/apply`)
+        .post(`/api/v1/jobs/${jobId}/apply`)
         .set("Authorization", `Bearer ${applicantToken}`);
       expect(applyRes.status).toBe(201);
       expect(applyRes.body.state).toBe("ACTIVE");
       const appId = applyRes.body.id;
 
       const ackRes = await request(app)
-        .post(`/api/applications/${appId}/acknowledge`)
+        .post(`/api/v1/applications/${appId}/acknowledge`)
         .set("Authorization", `Bearer ${applicantToken}`);
       expect(ackRes.status).toBe(200);
 
       const exitRes = await request(app)
-        .post(`/api/applications/${appId}/exit`)
+        .post(`/api/v1/applications/${appId}/exit`)
         .set("Authorization", `Bearer ${applicantToken}`);
       expect(exitRes.status).toBe(200);
       expect(exitRes.body.state).toBe("EXITED");
@@ -106,7 +106,7 @@ describe("API Integration Tests (Highest Quality)", () => {
       const company = await registerCompany({ name: "C", email: uniqEmail("c"), password: "password123" });
       const token = signCompanyToken(company.id);
       const res = await request(app)
-        .get("/api/jobs/not-a-uuid")
+        .get("/api/v1/jobs/not-a-uuid")
         .set("Authorization", `Bearer ${token}`);
       expect(res.status).toBe(400);
       expect(res.body.code).toBe("VALIDATION_ERROR");
@@ -114,15 +114,15 @@ describe("API Integration Tests (Highest Quality)", () => {
 
     it("returns 409 for invalid state transitions (e.g. double exit)", async () => {
       const company = await registerCompany({ name: "C", email: uniqEmail("c"), password: "password123" });
-      const job = await request(app).post("/api/jobs").set("Authorization", `Bearer ${signCompanyToken(company.id)}`).send({ title: "T", capacity: 1 });
-      const appRes = await request(app).post("/api/applicant/auth/register").send({ name: "A", email: uniqEmail("a"), password: "password123" });
-      const apply = await request(app).post(`/api/jobs/${job.body.id}/apply`).set("Authorization", `Bearer ${appRes.body.token}`);
+      const job = await request(app).post("/api/v1/jobs").set("Authorization", `Bearer ${signCompanyToken(company.id)}`).send({ title: "T", capacity: 1 });
+      const appRes = await request(app).post("/api/v1/applicant/auth/register").send({ name: "A", email: uniqEmail("a"), password: "password123" });
+      const apply = await request(app).post(`/api/v1/jobs/${job.body.id}/apply`).set("Authorization", `Bearer ${appRes.body.token}`);
       
       const token = appRes.body.token;
       const appId = apply.body.id;
 
-      await request(app).post(`/api/applications/${appId}/exit`).set("Authorization", `Bearer ${token}`);
-      const res = await request(app).post(`/api/applications/${appId}/exit`).set("Authorization", `Bearer ${token}`);
+      await request(app).post(`/api/v1/applications/${appId}/exit`).set("Authorization", `Bearer ${token}`);
+      const res = await request(app).post(`/api/v1/applications/${appId}/exit`).set("Authorization", `Bearer ${token}`);
       
       expect(res.status).toBe(200);
       expect(res.body.state).toBe("EXITED");
@@ -130,17 +130,17 @@ describe("API Integration Tests (Highest Quality)", () => {
   });
 
   describe("Observability & Analytics", () => {
-    it("GET /api/jobs/:jobId returns full dashboard for company", async () => {
+    it("GET /api/v1/jobs/:jobId returns full dashboard for company", async () => {
       const company = await registerCompany({ name: "Obs Corp", email: uniqEmail("obs"), password: "password123" });
       const token = signCompanyToken(company.id);
-      const job = await request(app).post("/api/jobs").set("Authorization", `Bearer ${token}`).send({ title: "Dev", capacity: 1 });
+      const job = await request(app).post("/api/v1/jobs").set("Authorization", `Bearer ${token}`).send({ title: "Dev", capacity: 1 });
       const jobId = job.body.id;
 
-      const applicant = await request(app).post("/api/applicant/auth/register").send({ name: "A", email: uniqEmail("a"), password: "password123" });
-      await request(app).post(`/api/jobs/${jobId}/apply`).set("Authorization", `Bearer ${applicant.body.token}`);
+      const applicant = await request(app).post("/api/v1/applicant/auth/register").send({ name: "A", email: uniqEmail("a"), password: "password123" });
+      await request(app).post(`/api/v1/jobs/${jobId}/apply`).set("Authorization", `Bearer ${applicant.body.token}`);
 
       const dash = await request(app)
-        .get(`/api/jobs/${jobId}`)
+        .get(`/api/v1/jobs/${jobId}`)
         .set("Authorization", `Bearer ${token}`);
       
       expect(dash.status).toBe(200);
@@ -148,16 +148,16 @@ describe("API Integration Tests (Highest Quality)", () => {
       expect(dash.body.active.length).toBe(1);
     });
 
-    it("GET /api/jobs/:jobId/replay reconstructs historical state", async () => {
+    it("GET /api/v1/jobs/:jobId/replay reconstructs historical state", async () => {
       const company = await registerCompany({ name: "Replay Corp", email: uniqEmail("rep"), password: "password123" });
       const token = signCompanyToken(company.id);
-      const job = await request(app).post("/api/jobs").set("Authorization", `Bearer ${token}`).send({ title: "History", capacity: 1 });
+      const job = await request(app).post("/api/v1/jobs").set("Authorization", `Bearer ${token}`).send({ title: "History", capacity: 1 });
       const jobId = job.body.id;
 
       const asOf = new Date().toISOString();
 
       const res = await request(app)
-        .get(`/api/jobs/${jobId}/replay?asOf=${asOf}`)
+        .get(`/api/v1/jobs/${jobId}/replay?asOf=${asOf}`)
         .set("Authorization", `Bearer ${token}`);
       
       expect(res.status).toBe(200);

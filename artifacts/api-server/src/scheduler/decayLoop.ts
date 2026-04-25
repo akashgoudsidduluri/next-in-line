@@ -29,20 +29,30 @@ async function processDecays() {
   }
 }
 
-// Global instance managed by start/stop exports
-const runner = new LeasedTaskRunner(
-  {
-    name: "DecayScheduler",
-    lockId: SCHEDULER_LOCK_ID,
-    intervalMs: TICK_MS,
-  },
-  processDecays
-);
+/**
+ * DecayScheduler
+ * 
+ * Instance-based scheduler to avoid global state and improve testability.
+ */
+export class DecayScheduler {
+  private runner: LeasedTaskRunner;
 
-export function startDecayLoop() {
-  runner.start();
-}
+  constructor() {
+    this.runner = new LeasedTaskRunner(
+      {
+        name: "DecayScheduler",
+        lockId: SCHEDULER_LOCK_ID,
+        intervalMs: TICK_MS,
+      },
+      processDecays
+    );
+  }
 
-export function stopDecayLoop() {
-  runner.stop();
+  public start() {
+    this.runner.start();
+  }
+
+  public stop() {
+    this.runner.stop();
+  }
 }

@@ -4,8 +4,10 @@ import {
   JobIdParams,
   ReplayJobQuery,
 } from "@workspace/api-zod";
-import { getJobDashboard } from "../services/queueEngine";
-import { jobBelongsToCompany } from "../services/queueEngineExt";
+import {
+  getJobDashboard,
+  jobBelongsToCompany,
+} from "../services/queueEngine";
 import { replayJob } from "../services/replay";
 import * as jobService from "../services/jobService";
 import { requireCompany, getCompanyAuth } from "../auth/middleware";

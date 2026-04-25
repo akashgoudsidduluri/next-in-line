@@ -1,6 +1,8 @@
 import { sql, eq } from "drizzle-orm";
 import { db, jobsTable, eventLogsTable } from "@workspace/db";
 import { toJobDto, toEventLogDto, type JobDto } from "./dto";
+import { withTransaction } from "../lib/transaction";
+import { logger } from "../lib/logger";
 
 export interface JobWithCounts {
   id: string;
@@ -50,18 +52,21 @@ export interface CreateJobInput {
 }
 
 export async function createJob(input: CreateJobInput) {
-  const [job] = await db
-    .insert(jobsTable)
-    .values({
-      title: input.title,
-      capacity: input.capacity,
-      decaySeconds: input.decaySeconds,
-      companyId: input.companyId,
-    })
-    .returning();
-  
-  if (!job) throw new Error("Failed to create job");
-  return toJobDto(job);
+  return withTransaction(async (tx) => {
+    logger.info({ title: input.title, companyId: input.companyId }, "Creating new job");
+    const [job] = await tx
+      .insert(jobsTable)
+      .values({
+        title: input.title,
+        capacity: input.capacity,
+        decaySeconds: input.decaySeconds,
+        companyId: input.companyId,
+      })
+      .returning();
+    
+    if (!job) throw new Error("Failed to create job");
+    return toJobDto(job);
+  });
 }
 
 export async function getJobById(jobId: string): Promise<JobDto | null> {

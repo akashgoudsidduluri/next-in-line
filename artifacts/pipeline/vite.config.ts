@@ -29,7 +29,7 @@ export default defineConfig({
             m.devBanner(),
           ),
         ]
-      : []),
+      : []) as any[],
   ],
   resolve: {
     alias: {
