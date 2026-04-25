@@ -13,6 +13,7 @@ import {
   type Applicant,
 } from "@workspace/db";
 import { ConflictError, UnauthorizedError, BadRequestError, HttpError } from "../lib/errors";
+import { logger } from "../lib/logger";
 
 const BCRYPT_COST = 10;
 
@@ -38,7 +39,13 @@ export async function registerCompany(input: {
     .from(companiesTable)
     .where(eq(companiesTable.email, email))
     .limit(1);
-  if (existing[0]) throw new ConflictError("Email already registered");
+  
+  if (existing[0]) {
+    logger.warn({ email }, "Company registration failed: email conflict");
+    throw new ConflictError("Email already registered");
+  }
+
+  logger.info({ email, name: input.name }, "Attempting company registration");
 
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_COST);
   const [created] = await db
@@ -60,9 +67,17 @@ export async function loginCompany(input: {
     .where(eq(companiesTable.email, email))
     .limit(1);
   const company = rows[0];
-  if (!company) throw new UnauthorizedError("Invalid credentials");
+  if (!company) {
+    logger.warn({ email }, "Company login failed: account not found");
+    throw new UnauthorizedError("Invalid credentials");
+  }
   const ok = await bcrypt.compare(input.password, company.passwordHash);
-  if (!ok) throw new UnauthorizedError("Invalid credentials");
+  if (!ok) {
+    logger.warn({ email, companyId: company.id }, "Company login failed: password mismatch");
+    throw new UnauthorizedError("Invalid credentials");
+  }
+  
+  logger.info({ email, companyId: company.id }, "Company login successful");
   return company;
 }
 
@@ -80,7 +95,13 @@ export async function registerApplicant(input: {
     .from(applicantsTable)
     .where(eq(applicantsTable.email, email))
     .limit(1);
-  if (existing[0]) throw new ConflictError("Email already registered");
+  
+  if (existing[0]) {
+    logger.warn({ email }, "Applicant registration failed: email conflict");
+    throw new ConflictError("Email already registered");
+  }
+
+  logger.info({ email, name: input.name }, "Attempting applicant registration");
 
   const passwordHash = await bcrypt.hash(input.password, BCRYPT_COST);
   const [created] = await db

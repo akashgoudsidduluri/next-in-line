@@ -1,53 +1,48 @@
-/**
- * Decay loop — internal poller (no external scheduling libs).
- *
- * Polls every TICK_MS for ACTIVE applications whose ack_deadline has elapsed
- * and decays each one in its own transaction. Each decay also cascade-promotes
- * the next waitlisted applicant. The loop is a simple setTimeout chain so
- * ticks never overlap; if a tick takes longer than TICK_MS it just runs the
- * next tick immediately on completion.
- */
-
 import { logger } from "../lib/logger";
+import { LeasedTaskRunner } from "../lib/scheduler";
 import {
   decayActiveApplication,
   findExpiredActiveApplicationIds,
 } from "../services/queueEngine";
 
-const TICK_MS = 1000;
+const SCHEDULER_LOCK_ID = 888123;
+const TICK_MS = 2000;
 
-let running = false;
-let stopped = false;
+/**
+ * The core decay task. Polled by the LeasedTaskRunner.
+ */
+async function processDecays() {
+  const ids = await findExpiredActiveApplicationIds();
+  if (ids.length > 0) {
+    logger.info({ count: ids.length }, "Processing expired applications");
+  }
 
-async function tick() {
-  if (stopped) return;
-  try {
-    const ids = await findExpiredActiveApplicationIds();
-    for (const id of ids) {
-      try {
-        const decayed = await decayActiveApplication(id);
-        if (decayed) {
-          logger.info({ applicationId: id }, "Application decayed");
-        }
-      } catch (err) {
-        logger.error({ err, applicationId: id }, "Decay failed");
+  for (const id of ids) {
+    try {
+      const decayed = await decayActiveApplication(id);
+      if (decayed) {
+        logger.info({ applicationId: id }, "Application decayed");
       }
+    } catch (err) {
+      logger.error({ err, applicationId: id }, "Decay processing failed for application");
     }
-  } catch (err) {
-    logger.error({ err }, "Decay loop tick failed");
-  } finally {
-    if (!stopped) setTimeout(tick, TICK_MS);
   }
 }
 
+// Global instance managed by start/stop exports
+const runner = new LeasedTaskRunner(
+  {
+    name: "DecayScheduler",
+    lockId: SCHEDULER_LOCK_ID,
+    intervalMs: TICK_MS,
+  },
+  processDecays
+);
+
 export function startDecayLoop() {
-  if (running) return;
-  running = true;
-  stopped = false;
-  logger.info({ tickMs: TICK_MS }, "Decay scheduler started");
-  setTimeout(tick, TICK_MS);
+  runner.start();
 }
 
 export function stopDecayLoop() {
-  stopped = true;
+  runner.stop();
 }
