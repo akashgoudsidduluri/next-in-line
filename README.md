@@ -227,7 +227,7 @@ This system is built on a clear boundary between **Explicit Domain Logic** and *
 
 This separation ensures that the complex, high-value parts of the system are custom-tailored for the hiring domain, while the generic, repetitive parts are handled by industry-standard tools.
 
-**Note on "mocked DB" vs real DB.** The brief asked for queue / decay / concurrency tests with a mocked DB layer. Drizzle's chained query builder is impractical to mock without introducing a thick repository abstraction whose value is questionable, and a mocked-DB concurrency test cannot validate that `SELECT … FOR UPDATE` actually serialises — it would only validate that the application would do the right thing **if** the lock worked. We therefore exercise the queue engine end-to-end against the configured `DATABASE_URL` (with row-level `DELETE` between cases so the tests can run alongside the live API server without an `AccessExclusiveLock` deadlock). True lock acquisition is proven by the `concurrency.test.ts` suite under `Promise.all`. In CI a dedicated test database would be configured via `DATABASE_URL` to isolate it from a developer's working data; this is listed in §10 as a future improvement.
+**Note on "mocked DB" vs real DB.** The brief asked for queue / decay / concurrency tests with a mocked DB layer. Drizzle's chained query builder is impractical to mock without introducing a thick repository abstraction whose value is questionable, and a mocked-DB concurrency test cannot validate that `SELECT … FOR UPDATE` actually serialises — it would only validate that the application would do the right thing **if** the lock worked. We therefore exercise the queue engine end-to-end against the configured `DATABASE_URL` (using `TRUNCATE CASCADE` between cases for perfect isolation and speed). True lock acquisition is proven by the `concurrency.test.ts` suite under `Promise.all`. In CI and local development, a dedicated test database must be configured via `DATABASE_URL` to isolate the destructive truncate operations from live application data.
 
 ---
 
@@ -339,7 +339,7 @@ pnpm install
 # 2. Push the database schema (needs DATABASE_URL set)
 pnpm --filter @workspace/db run push
 
-# 3. Run the test suite (43 tests, ~10 s)
+# 3. Run the test suite (58 tests, ~10 s)
 pnpm --filter @workspace/api-server run test
 
 # 4. Start the API server  (terminal 1)
@@ -355,7 +355,7 @@ Required env vars:
 
 | Variable | Used by | Default in dev |
 | --- | --- | --- |
-| `DATABASE_URL` | API server + tests | — (must be set) |
+| `DATABASE_URL` | API server + tests | — (must be set, MUST include a password for security) |
 | `SESSION_SECRET` | API server JWT signing | — (must be set) |
 | `PORT` | API server | — (must be set) |
 | `API_PORT` | Vite proxy target | `3000` |
@@ -368,7 +368,7 @@ Required env vars:
 - **No pagination on event log.** `/jobs/:id/events` returns the full history; the dashboard view caps at 50.
 - **No rate limiting on apply.** A determined applicant could spam `POST /jobs/:id/apply`. The duplicate-application guard prevents queue corruption but doesn't prevent log noise.
 - **Decay tick = 1s.** Worst-case decay latency = 1s. For sub-second windows you'd want PG `LISTEN/NOTIFY` driven by a deadline trigger.
-- **Tests share the dev DB.** `resetDb` uses `DELETE FROM` between cases; CI should set `DATABASE_URL` to a dedicated test instance.
+- **Tests share the dev DB.** `resetDb` uses `TRUNCATE CASCADE` between cases for maximum performance and isolation. CI and local testing should set `DATABASE_URL` to a dedicated test instance to avoid wiping dev data.
 
 ---
 
